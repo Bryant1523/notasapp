@@ -430,12 +430,14 @@ st.set_page_config(
 st.markdown("""
     <style>
         /* --- INICIO: Ocultar la barra superior de Streamlit --- */
-        /* --- CORRECCION: No usar visibility: hidden en el header padre para no matar el botón toggle --- */
-        /* header {visibility: hidden;}  <- ELIMINADO */
+        
+        header {
+            visibility: hidden;
+        }
         
         /* Ocultar la línea de decoración */
         [data-testid="stDecoration"] {
-            display: none;
+            visibility: hidden;
         }
         
         /* Hacer el fondo del header transparente */
@@ -445,8 +447,9 @@ st.markdown("""
         
         /* Asegurar que el botón de toggle (flecha) sea visible y azul */
         [data-testid="collapsedControl"] {
-            display: block !important;
+            visibility: visible !important;
             color: #00449C !important;
+            z-index: 1000000;
         }
         /* ---------------------------------------------------------------------- */
 
@@ -826,6 +829,23 @@ with tab1:
                         norm_to_originals.setdefault(norm, set()).add(orig)
                     else:
                         norm_to_originals.setdefault(orig.strip(), set()).add(orig)
+                
+                # --- CORRECCIÓN: Filtro de facturas ya utilizadas (Apiladas) ---
+                # Obtenemos la lista de facturas que ya están en tickets generados
+                used_invoices_set = set()
+                if st.session_state['stacked_invoices']:
+                    for batch_df in st.session_state['stacked_invoices']:
+                        # En los tickets guardados la columna se llama 'ASIGNACION'
+                        if 'ASIGNACION' in batch_df.columns:
+                            used_invoices_set.update(batch_df['ASIGNACION'].astype(str).str.strip().tolist())
+                        # Por si acaso se guardó con el nombre original
+                        elif col_factura in batch_df.columns:
+                            used_invoices_set.update(batch_df[col_factura].astype(str).str.strip().tolist())
+                
+                # Filtramos df_pre_filtros para quitar las usadas
+                if used_invoices_set:
+                     df_pre_filtros = df_pre_filtros[~df_pre_filtros[col_factura].astype(str).str.strip().isin(used_invoices_set)].copy()
+                # ---------------------------------------------------------------
 
                 referenced_originals = set()
                 for idx, row in df_pre_filtros.iterrows():
@@ -1304,3 +1324,4 @@ with tab2:
                 st.session_state['stacked_invoices'] = []
                 st.success("Todos los tickets han sido limpiados.")
                 st.rerun()
+            
