@@ -38,35 +38,23 @@ def detect_portfolio_code(df):
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
-        # Busca combinaciones comunes: "org" + "ven" O "org" + "vta"
         if 'org' in c_clean and ('ven' in c_clean or 'vta' in c_clean):
             col_org_venta = col
             break
             
     if col_org_venta:
-        # Obtenemos los valores únicos convertidos a string, mayúsculas y sin espacios
         unique_vals = set(df[col_org_venta].astype(str).str.strip().str.upper().unique())
-        
-        # Creamos un set con versiones limpias (sin ceros) y originales para asegurar coincidencia
         unique_set = set()
         for val in unique_vals:
-            unique_set.add(val) # Agrega "0702"
-            unique_set.add(clean_leading_zeros(val)) # Agrega "702"
+            unique_set.add(val) 
+            unique_set.add(clean_leading_zeros(val)) 
         
-        # Alimentos Polar (APC)
-        if '702' in unique_set or '0702' in unique_set:
-            return '0700'
-        # Productos EFE
-        if '602' in unique_set or '0602' in unique_set:
-            return '0600'
-        # Pepsi-Cola (PCV)
-        if 'R200' in unique_set:
-            return 'R100'
-        # Cervecería (CYM)
-        if 'C001' in unique_set:
-            return 'C001'
+        if '702' in unique_set or '0702' in unique_set: return '0700'
+        if '602' in unique_set or '0602' in unique_set: return '0600'
+        if 'R200' in unique_set: return 'R100'
+        if 'C001' in unique_set: return 'C001'
 
-    # ESTRATEGIA 2: Buscar por columna "Sociedad" (Nombre explícito)
+    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -77,14 +65,10 @@ def detect_portfolio_code(df):
     if col_sociedad:
         unique_soc = set(df[col_sociedad].astype(str).str.strip().str.lower().unique())
         for val in unique_soc:
-            if 'alimentos' in val and 'polar' in val:
-                return '0700'
-            if 'pepsi' in val:
-                return 'R100'
-            if 'cervecer' in val:
-                return 'C001'
-            if 'efe' in val:
-                return '0600'
+            if 'alimentos' in val and 'polar' in val: return '0700'
+            if 'pepsi' in val: return 'R100'
+            if 'cervecer' in val or 'cerveceria' in val: return 'C001'
+            if 'efe' in val: return '0600'
 
     # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
@@ -92,11 +76,8 @@ def detect_portfolio_code(df):
 
     if col_clase_factura:
         unique_factura_codes = set(df[col_clase_factura].astype(str).str.strip().str.upper().unique())
-        
-        if any(code in unique_factura_codes for code in ['YP01', 'YP04', 'YP10']):
-            return 'R100'
-        if 'YC00' in unique_factura_codes:
-            return 'C001'
+        if any(code in unique_factura_codes for code in ['YP01', 'YP04', 'YP10']): return 'R100'
+        if 'YC00' in unique_factura_codes: return 'C001'
 
     return '--'
 
@@ -131,23 +112,30 @@ def format_monto_local(monto):
     except (ValueError, TypeError):
         return str(monto) 
 
-def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_col, client_col, assignment_mode):
+# --- CORRECCIÓN EN ESTA FUNCIÓN: Se agrega product_col ---
+def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_col, client_col, product_col, assignment_mode):
     if df_candidates.empty or invoice_col not in df_candidates.columns or price_col not in df_candidates.columns:
         return None, None, 0
 
     df_candidates_copy = df_candidates.copy() 
-    df_candidates_copy['__monto_numeric__'] = df_candidates_copy[price_col].apply(convert_value_to_float)
+    if '__monto_numeric__' not in df_candidates_copy.columns:
+        df_candidates_copy['__monto_numeric__'] = df_candidates_copy[price_col].apply(convert_value_to_float)
+    
     df_candidates_copy.dropna(subset=['__monto_numeric__'], inplace=True)
+    df_candidates_copy = df_candidates_copy[df_candidates_copy['__monto_numeric__'] > 0.01]
 
     if df_candidates_copy.empty:
         return None, None, 0
 
+    # --- CORRECCIÓN: Agregamos el producto al agrupamiento para no perderlo ---
     invoice_sums_df = df_candidates_copy.groupby(invoice_col).agg(
         total_sum=('__monto_numeric__', 'sum'),
-        client_code=(client_col, 'first')
+        client_code=(client_col, 'first'),
+        product_code=(product_col, 'first') # Tomamos el primer producto disponible de la factura
     ).reset_index()
+    # --------------------------------------------------------------------------
 
-    invoice_sums_df.columns = [invoice_col, 'total_sum', client_col]
+    invoice_sums_df.columns = [invoice_col, 'total_sum', client_col, product_col]
 
     sufficient_invoices = invoice_sums_df[invoice_sums_df['total_sum'] >= target_amount]
 
@@ -186,7 +174,6 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
         required_from_last = max(0, required_from_last)
 
         df_selected_invoices_copy = df_selected_invoices.copy()
-        
         last_idx_in_df = df_selected_invoices_copy.index[-1]
         df_selected_invoices_copy.loc[last_idx_in_df, 'total_sum'] = required_from_last
         
@@ -259,13 +246,11 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         normalized_template_header = template_header.replace(' ', '').lower()
         df_column_name = None
         
-        # 1. Intento de coincidencia exacta con el mapa
         for df_col, template_col_match in df_column_map.items():
             if template_col_match.replace(' ', '').lower() == normalized_template_header:
                 df_column_name = df_col
                 break
         
-        # 2. Coincidencia difusa para detectar encabezados cortados
         if df_column_name is None:
             if "clase" in normalized_template_header and "pedido" in normalized_template_header:
                 df_column_name = "Clase de pedido"
@@ -429,46 +414,20 @@ st.set_page_config(
 
 st.markdown("""
     <style>
-        /* --- INICIO: Ocultar la barra superior de Streamlit --- */
+        header { visibility: hidden; }
+        [data-testid="stDecoration"] { visibility: hidden; }
+        [data-testid="stHeader"] { background-color: transparent; }
+        [data-testid="collapsedControl"] { visibility: visible !important; color: #00449C !important; z-index: 1000000; }
         
-        header {
-            visibility: hidden;
-        }
-        
-        /* Ocultar la línea de decoración */
-        [data-testid="stDecoration"] {
-            visibility: hidden;
-        }
-        
-        /* Hacer el fondo del header transparente */
-        [data-testid="stHeader"] {
-            background-color: transparent;
-        }
-        
-        /* Asegurar que el botón de toggle (flecha) sea visible y azul */
-        [data-testid="collapsedControl"] {
-            visibility: visible !important;
-            color: #00449C !important;
-            z-index: 1000000;
-        }
-        /* ---------------------------------------------------------------------- */
+        .block-container { padding-top: 1rem !important; }
 
-        /* --- INICIO: Reducir espacio superior del contenido principal --- */
-        .block-container {
-            padding-top: 1rem !important;
-        }
-        /* --- FIN: Reducir espacio superior --- */
-
-        /* --- INICIO: Espaciado vertical uniforme para filtros --- */
         section[data-testid="stSidebar"] [data-testid="stFileUploader"],
         section[data-testid="stSidebar"] [data-testid="stButton"],
         section[data-testid="stSidebar"] [data-testid="stTextInput"],
         section[data-testid="stSidebar"] [data-testid="stSelectbox"] {
             margin-bottom: 12px !important;
         }
-        /* --- FIN: Espaciado vertical uniforme para filtros --- */
 
-        /* --- INICIO: Reducir tamaño del File Uploader --- */
         [data-testid="stSidebar"] [data-testid="stFileUploader"] section[data-testid="stFileUploadDropzone"] {
             min-height: auto !important;
             padding: 0.75rem !important; 
@@ -487,15 +446,11 @@ st.markdown("""
             padding: 2px 8px;
             font-size: 0.8rem;
         }
-        /* --- FIN: Reducir tamaño del File Uploader --- */
 
-        /* FONDO DE LA BARRA LATERAL RESTAURADO AL PREDETERMINADO DE STREAMLIT (SE QUITÓ EL CUADRO ROJO) */
         section[data-testid="stSidebar"] {
             padding-top: 5px !important;
         }
         
-        /* ESTILO UNIFICADO PARA LOS BOTONES DE LA BARRA LATERAL (Cargar y Limpiar) */
-        /* Hacemos que todos sean blancos con borde y texto azul */
         section[data-testid="stSidebar"] button {
             background-color: white !important;
             border-color: #00449C !important;
@@ -507,39 +462,14 @@ st.markdown("""
             color: #00449C !important;
         }
         
-        /* --- CORRECCION DE ESPACIADO: IGUALAR ESPACIOS ARRIBA Y ABAJO DEL BOTÓN ANALIZAR --- */
+        section[data-testid="stSidebar"] [data-testid="stFileUploader"] { margin-bottom: 12px !important; }
+        section[data-testid="stSidebar"] [data-testid="stButton"] { margin-bottom: 12px !important; }
+        [data-testid="stForm"] { margin-top: 0px !important; border: none !important; padding: 0 !important; }
         
-        /* 1. Definir margen inferior específico para el Uploader para crear el espacio SUPERIOR del botón Analizar */
-        section[data-testid="stSidebar"] [data-testid="stFileUploader"] {
-            margin-bottom: 12px !important; 
-        }
+        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label { color: initial !important; }
+        [data-testid="stSidebar"] .stRadio label span { color: initial; }
 
-        /* 2. Definir margen inferior específico para el Botón Analizar para crear el espacio INFERIOR hacia el Formulario */
-        section[data-testid="stSidebar"] [data-testid="stButton"] {
-            margin-bottom: 12px !important;
-        }
-
-        /* 3. Eliminar margen superior e inferior del Formulario para que no se sume al del botón */
-        [data-testid="stForm"] {
-            margin-top: 0px !important;
-            border: none !important;
-            padding: 0 !important;
-        }
-        
-        /* ----------------------------------------------------------------------------------------------- */
-        
-        /* El texto y elementos dentro de la barra lateral vuelven a ser oscuros (por el fondo claro) */
-        [data-testid="stSidebar"] .stMarkdown, 
-        [data-testid="stSidebar"] label {
-            color: initial !important;
-        }
-        [data-testid="stSidebar"] .stRadio label span {
-             color: initial;
-        }
-        /* Fin de ajustes de color */
-
-        [data-testid="stSidebar"] div.stSelectbox,
-        [data-testid="stSidebar"] div.stTextInput {
+        [data-testid="stSidebar"] div.stSelectbox, [data-testid="stSidebar"] div.stTextInput {
             background-color: white !important;
             border-radius: 5px;
         }
@@ -547,52 +477,25 @@ st.markdown("""
         [data-testid="stSidebar"] div.stTextInput div[data-testid="stInputContainer"] {
             background-color: white !important;
         }
-        /* Esto centra la imagen del logo del portafolio en la barra lateral, si se llega a usar */
-        [data-testid="stSidebar"] [data-testid="stImage"] {
-            display: flex;
-            justify-content.center;
-            margin-left: auto;
-            margin-right: auto;
-            margin-top: 5px;
-        }
-        
-        /* Oculta la lista de archivos subidos (los que quieres quitar) */
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul {
-            display: none;
-        }
-        
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy,
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p {
-            color: #00449C;
-        }
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg {
-            fill: #00449C;
-        }
-        
-        /* Eliminamos el estilo de posicionamiento absoluto fallido */
-        .logo-container-right {
-             display: none; 
-        }
-        /* Ajustamos el margen del título principal para que el logo fijo se vea bien */
-        [data-testid="stHorizontalBlock"] h1 {
-            margin-top: 0px !important;
-            padding-top: 0px !important;
-        }
 
-        /* --- CORRECCION: Ajuste para que los textos largos en el Selectbox se vean completos --- */
+        [data-testid="stSidebar"] [data-testid="stImage"] {
+            display: flex; justify-content.center; margin-left: auto; margin-right: auto; margin-top: 5px;
+        }
+        
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul { display: none; }
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy,
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p { color: #00449C; }
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg { fill: #00449C; }
+        
+        .logo-container-right { display: none; }
+        [data-testid="stHorizontalBlock"] h1 { margin-top: 0px !important; padding-top: 0px !important; }
+
         li[role="option"] span {
-            white-space: normal !important;
-            line-height: 1.2 !important;
-            height: auto !important;
-            overflow: visible !important;
-            text-overflow: clip !important;
+            white-space: normal !important; line-height: 1.2 !important; height: auto !important;
+            overflow: visible !important; text-overflow: clip !important;
         }
         
-        div[data-baseweb="popover"] {
-            max-width: 90vw !important; /* Permitir que el menú sea más ancho si es necesario */
-        }
-        /* -------------------------------------------------------------------------------------- */
-        
+        div[data-baseweb="popover"] { max-width: 90vw !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -681,7 +584,6 @@ with st.sidebar:
                 "Promoción.Sell Out.Reconocimiento",
                 "Sin Motivo"
             ]
-            # -------------------------------------------------------
             st.session_state['filtro_motivo'] = st.selectbox(
                 "Motivo:",
                 options=motivo_options
@@ -786,16 +688,12 @@ with tab1:
         condicion_forzada = None  
         template_condicion = 'ZNOT'
 
-        # --- CORRECCIÓN: Usar los valores de la imagen para configurar los defaults ---
         PORTFOLIO_DEFAULTS = {
             'R100': {'Clase de pedido': 'YNCR', 'Organizacion de Venta': 'R200', 'Canal de Distribucion': 'CA', 'Sector': 'R6'},
             'C001': {'Clase de pedido': 'ZCDF', 'Organizacion de Venta': 'C001', 'Canal de Distribucion': 'CA', 'Sector': 'C1'},
-            # Alimentos Polar: Org Venta 0702 -> Código portafolio 0700
             '0700': {'Clase de pedido': 'Z1MA', 'Organizacion de Venta': '0702', 'Canal de Distribucion': 'DS', 'Sector': 'A1'},
-            # Productos EFE: Org Venta 0602 -> Código portafolio 0600
             '0600': {'Clase de pedido': 'Z1MA', 'Organizacion de Venta': '0602', 'Canal de Distribucion': 'DS', 'Sector': 'A1'},
         }
-        # ------------------------------------------------------------------------------
 
         selected_portfolio_cod = st.session_state.get('portafolio_cod')
         assignment_mode = st.session_state.get('assignment_mode') 
@@ -818,58 +716,6 @@ with tab1:
             factura_keys = ['factura', 'nofactura', 'numerofactura', 'asignacion']
             col_factura = next((c for c in df_pre_filtros.columns if any(k in str(c).lower().replace(" ", "").replace("°", "") for k in factura_keys)), None)
 
-            if col_factura:
-                all_invoices_list = df_pre_filtros[col_factura].astype(str).fillna('').str.strip().unique().tolist()
-                
-                norm_to_originals = {}
-                for orig in all_invoices_list:
-                    digits = re.sub(r'\D', '', orig)
-                    norm = clean_leading_zeros(digits)
-                    if norm:
-                        norm_to_originals.setdefault(norm, set()).add(orig)
-                    else:
-                        norm_to_originals.setdefault(orig.strip(), set()).add(orig)
-                
-                # --- CORRECCIÓN: Filtro de facturas ya utilizadas (Apiladas) ---
-                # Obtenemos la lista de facturas que ya están en tickets generados
-                used_invoices_set = set()
-                if st.session_state['stacked_invoices']:
-                    for batch_df in st.session_state['stacked_invoices']:
-                        # En los tickets guardados la columna se llama 'ASIGNACION'
-                        if 'ASIGNACION' in batch_df.columns:
-                            used_invoices_set.update(batch_df['ASIGNACION'].astype(str).str.strip().tolist())
-                        # Por si acaso se guardó con el nombre original
-                        elif col_factura in batch_df.columns:
-                            used_invoices_set.update(batch_df[col_factura].astype(str).str.strip().tolist())
-                
-                # Filtramos df_pre_filtros para quitar las usadas
-                if used_invoices_set:
-                     df_pre_filtros = df_pre_filtros[~df_pre_filtros[col_factura].astype(str).str.strip().isin(used_invoices_set)].copy()
-                # ---------------------------------------------------------------
-
-                referenced_originals = set()
-                for idx, row in df_pre_filtros.iterrows():
-                    row_invoice = str(row.get(col_factura, '')).strip()
-                    for col_name in df_pre_filtros.columns:
-                        try:
-                            cell_content = str(row[col_name]).strip()
-                        except Exception:
-                            cell_content = ''
-                        if not cell_content:
-                            continue
-
-                        for num_in_cell in re.findall(r'\d{7,}', cell_content):
-                            norm_num = clean_leading_zeros(num_in_cell)
-                            if norm_num in norm_to_originals:
-                                for original_invoice in norm_to_originals[norm_num]:
-                                    if str(original_invoice).strip() != row_invoice:
-                                        referenced_originals.add(original_invoice)
-
-                if referenced_originals:
-                    initial_rows = len(df_pre_filtros)
-                    df_pre_filtros = df_pre_filtros[~df_pre_filtros[col_factura].astype(str).str.strip().isin(referenced_originals)].copy()
-                    final_rows = len(df_pre_filtros)
-            
             cliente_keys = ['cliente', 'codcliente', 'solicitante']
             producto_keys = ['producto', 'material', 'codigoproducto'] 
             unidad_medida_keys = ['u.m venta', 'um venta', 'unidad venta', 'u. medida', 'umedida', 'um'] 
@@ -887,7 +733,7 @@ with tab1:
             col_unidad_medida = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in unidad_medida_keys)), None)
             col_condicion = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in condicion_keys)), None)
             col_clase_factura = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in clase_factura_keys)), None)
-
+            
             if not col_cliente or not col_factura or not col_monto:
                 st.error("Error: Revise los encabezados de su archivo (Solicitante/Cliente, Factura/Asignacion y Precio/Monto).")
                 st.stop()
@@ -917,6 +763,82 @@ with tab1:
                             st.stop()
                         elif filtered_rows < original_rows:
                             pass 
+
+            if col_factura:
+                all_invoices_list = df_pre_filtros[col_factura].astype(str).fillna('').str.strip().unique().tolist()
+                
+                norm_to_originals = {}
+                for orig in all_invoices_list:
+                    digits = re.sub(r'\D', '', orig)
+                    norm = clean_leading_zeros(digits)
+                    if norm:
+                        norm_to_originals.setdefault(norm, set()).add(orig)
+                    else:
+                        norm_to_originals.setdefault(orig.strip(), set()).add(orig)
+
+                used_amount_map = {}
+                if st.session_state['stacked_invoices']:
+                    for batch_df in st.session_state['stacked_invoices']:
+                        inv_col_name = 'ASIGNACION' if 'ASIGNACION' in batch_df.columns else col_factura
+                        amount_col_name = 'Monto NC Asignado'
+
+                        if inv_col_name in batch_df.columns and amount_col_name in batch_df.columns:
+                            for idx, row in batch_df.iterrows():
+                                inv_id = str(row[inv_col_name]).strip()
+                                val = convert_value_to_float(row[amount_col_name])
+                                if val:
+                                    used_amount_map[inv_id] = used_amount_map.get(inv_id, 0.0) + val
+
+                if used_amount_map:
+                    df_pre_filtros['__monto_numeric__'] = df_pre_filtros[col_monto].apply(convert_value_to_float)
+                    
+                    def reduce_balance(group):
+                        inv_id = str(group.name).strip() 
+                        
+                        if inv_id in used_amount_map:
+                            total_used = used_amount_map[inv_id]
+                            for idx in group.index:
+                                if total_used <= 0.01: 
+                                    break
+                                
+                                current_val = group.at[idx, '__monto_numeric__']
+                                if pd.isna(current_val): continue
+                                
+                                if current_val > total_used:
+                                    group.at[idx, '__monto_numeric__'] = current_val - total_used
+                                    total_used = 0
+                                else:
+                                    group.at[idx, '__monto_numeric__'] = 0
+                                    total_used -= current_val
+                        return group
+
+                    df_pre_filtros = df_pre_filtros.groupby(col_factura, group_keys=False).apply(reduce_balance)
+                    df_pre_filtros = df_pre_filtros[df_pre_filtros['__monto_numeric__'] > 0.01].copy()
+                    
+                    df_pre_filtros[col_monto] = df_pre_filtros['__monto_numeric__'].apply(format_monto_local)
+                    
+                referenced_originals = set()
+                for idx, row in df_pre_filtros.iterrows():
+                    row_invoice = str(row.get(col_factura, '')).strip()
+                    for col_name in df_pre_filtros.columns:
+                        try:
+                            cell_content = str(row[col_name]).strip()
+                        except Exception:
+                            cell_content = ''
+                        if not cell_content:
+                            continue
+
+                        for num_in_cell in re.findall(r'\d{7,}', cell_content):
+                            norm_num = clean_leading_zeros(num_in_cell)
+                            if norm_num in norm_to_originals:
+                                for original_invoice in norm_to_originals[norm_num]:
+                                    if str(original_invoice).strip() != row_invoice:
+                                        referenced_originals.add(original_invoice)
+
+                if referenced_originals:
+                    initial_rows = len(df_pre_filtros)
+                    df_pre_filtros = df_pre_filtros[~df_pre_filtros[col_factura].astype(str).str.strip().isin(referenced_originals)].copy()
+                    final_rows = len(df_pre_filtros)
 
             df_temp_validation = df_pre_filtros.copy()
             
@@ -977,7 +899,7 @@ with tab1:
                      df_para_mostrar_editor = pd.DataFrame() 
                 else:
                     with st.spinner("Calculando..."):
-                        chosen_invoices_df, cliente_a_usar, monto_cubierto = find_invoices_by_total_sum(df_temp_for_coverage, monto_nc, col_factura, col_monto, col_cliente, assignment_mode)
+                        chosen_invoices_df, cliente_a_usar, monto_cubierto = find_invoices_by_total_sum(df_temp_for_coverage, monto_nc, col_factura, col_monto, col_cliente, col_producto, assignment_mode)
                     
                     if chosen_invoices_df is None:
                         monto_faltante = monto_nc - monto_cubierto
@@ -1020,7 +942,18 @@ with tab1:
                             elif assignment_mode == 'Estricto (Truncar)':
                                 df_para_mostrar_editor = df_para_mostrar_editor.drop(columns=['total_sum'], errors='ignore')
                             
-                            df_para_mostrar_editor[col_producto] = product_code_final_str if product_code_final_str else ''
+                            # --- CORRECCIÓN: Usar el producto que viene de la data, no forzar el del filtro ---
+                            # df_para_mostrar_editor[col_producto] = product_code_final_str if product_code_final_str else ''
+                            if product_code_final_str and col_producto not in df_para_mostrar_editor.columns:
+                                df_para_mostrar_editor[col_producto] = product_code_final_str
+                            elif col_producto in df_para_mostrar_editor.columns:
+                                # Si ya existe (porque viene del groupby), nos aseguramos de que no esté vacía
+                                # Si hay celdas vacías, podríamos rellenarlas con el filtro si existe
+                                if product_code_final_str:
+                                     df_para_mostrar_editor[col_producto] = df_para_mostrar_editor[col_producto].replace('', product_code_final_str).fillna(product_code_final_str)
+                            else:
+                                 df_para_mostrar_editor[col_producto] = ''
+                            # ----------------------------------------------------------------------------------
 
                             df_para_mostrar_editor[col_cliente] = cliente_a_usar 
                             
@@ -1162,14 +1095,10 @@ with tab1:
                 texto_cabecera += f" (Ticket {ticket_number})"
             df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
             
-            # --- MODIFICADO: APLICACIÓN DE LOS DEFAULTS DEL PORTAFOLIO ---
-            # Usamos el diccionario PORTFOLIO_DEFAULTS definido anteriormente (basado en tu imagen)
             selected_defaults = PORTFOLIO_DEFAULTS.get(selected_portfolio_cod)
 
             if selected_defaults:
-                # Usamos assign para sobreescribir o crear las columnas con los valores fijos
                 df_para_mostrar_editor = df_para_mostrar_editor.assign(**selected_defaults)
-            # -------------------------------------------------------------
                 
             df_display_editor = df_para_mostrar_editor.copy()
             
@@ -1324,4 +1253,3 @@ with tab2:
                 st.session_state['stacked_invoices'] = []
                 st.success("Todos los tickets han sido limpiados.")
                 st.rerun()
-            
