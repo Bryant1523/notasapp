@@ -575,6 +575,13 @@ with st.sidebar:
         type=['xlsx', 'xls', 'csv'], 
         label_visibility="collapsed"
     ) 
+
+    # --- NOMBRE DE ARCHIVO: MOSTRAR ANTES DE CARGAR, OCULTAR DESPUÉS ---
+    if uploaded_file and st.session_state.get('df_full') is None:
+        full_name = uploaded_file.name
+        # Cortar a 25 caracteres + "..." si es muy largo
+        short_name = full_name[:25] + "..." if len(full_name) > 25 else full_name
+        st.info(f"📄 Archivo: {short_name}")
     
     analyze_button = st.button("Analizar y Cargar", disabled=(uploaded_file is None), use_container_width=True, type="primary")
 
@@ -592,14 +599,6 @@ with st.sidebar:
 
     if st.session_state.get('df_full') is not None:
         
-        # --- NOMBRE DEL ARCHIVO CORTO ---
-        full_name = st.session_state.get('file_name', 'Desconocido')
-        # Cortar a 25 caracteres + "..." si es muy largo
-        short_name = full_name[:25] + "..." if len(full_name) > 25 else full_name
-        st.success(f"📂 Archivo: {short_name}")
-        
-        # --- SE ELIMINÓ EL SELECTOR DE PORTAFOLIO COMO PEDISTE ---
-
         with st.form(key='parametros_nc_form'):
             motivo_options = [
                 "Anulación documento",
@@ -610,19 +609,18 @@ with st.sidebar:
                 "Promoción.Sell Out.Reconocimiento",
                 "Sin Motivo"
             ]
-            st.session_state['filtro_motivo'] = st.selectbox(
-                "Motivo:",
-                options=motivo_options
-            )
+            # --- CORRECCIÓN: AGREGADOS "KEY" A LOS INPUTS PARA PERMITIR LIMPIEZA ---
+            st.selectbox("Motivo:", options=motivo_options, key="filtro_motivo")
             
-            st.session_state['filtro_cliente_cod'] = st.text_input("Cod. Cliente:")
-            st.session_state['filtro_producto_cod'] = st.text_input("Cod. Producto:", 
-                                                                     value=st.session_state.get('filtro_producto_cod', ''))
+            st.text_input("Cod. Cliente:", key="filtro_cliente_cod")
+            
+            st.text_input("Cod. Producto:", key="filtro_producto_cod")
           
             monto_input_str = st.text_input(
                 "Monto NC:", 
                 value=st.session_state.get('monto_display', ''),
                 placeholder="",
+                key="widget_monto_nc" # Clave auxiliar para el widget
             )
             monto_nc_temp = convert_value_to_float(monto_input_str)
             st.session_state['filtro_monto'] = monto_nc_temp
@@ -635,7 +633,7 @@ with st.sidebar:
             else:
                 st.session_state['monto_display'] = monto_input_str
                 
-            st.session_state['filtro_ticket_cod'] = st.text_input("N° de Ticket:")
+            st.text_input("N° de Ticket:", key="filtro_ticket_cod")
             
             st.session_state['assignment_mode'] = 'Prorrateo (Recomendado)'
             
@@ -646,7 +644,7 @@ with st.sidebar:
     limpiar_button = local_limpiar_button
     
     if limpiar_button:
-        # --- LÓGICA DE LIMPIEZA: SOLO BORRA FILTROS, MANTIENE ARCHIVO Y PORTAFOLIO ---
+        # --- LÓGICA DE LIMPIEZA: BORRA LAS CLAVES, REINICIANDO LOS WIDGETS ---
         keys_to_preserve = ['df_full', 'stacked_invoices', 'portafolio_cod', 'file_name']
         for key in list(st.session_state.keys()):
             if key not in keys_to_preserve:
@@ -750,6 +748,7 @@ with tab1:
         assignment_mode = st.session_state.get('assignment_mode') 
         ticket_number = st.session_state.get('filtro_ticket_cod', '').strip() 
 
+        # --- SE CAMBIÓ LA LECTURA DE VARIABLES PARA USAR "st.session_state.get()" YA QUE AHORA USAMOS KEYS ---
         client_code_input_raw = st.session_state.get('filtro_cliente_cod', '').strip()
         client_code_list = clean_input_codes(client_code_input_raw) 
         
