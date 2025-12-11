@@ -38,12 +38,16 @@ def detect_portfolio_code(df):
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
+        # Busca combinaciones comunes: "org" + "ven" O "org" + "vta"
         if 'org' in c_clean and ('ven' in c_clean or 'vta' in c_clean):
             col_org_venta = col
             break
             
     if col_org_venta:
+        # Obtenemos los valores únicos convertidos a string, mayúsculas y sin espacios
         unique_vals = set(df[col_org_venta].astype(str).str.strip().str.upper().unique())
+        
+        # Creamos un set con versiones limpias (sin ceros) y originales para asegurar coincidencia
         unique_set = set()
         for val in unique_vals:
             unique_set.add(val) 
@@ -112,7 +116,6 @@ def format_monto_local(monto):
     except (ValueError, TypeError):
         return str(monto) 
 
-# --- CORRECCIÓN EN ESTA FUNCIÓN: Se agrega product_col ---
 def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_col, client_col, product_col, assignment_mode):
     if df_candidates.empty or invoice_col not in df_candidates.columns or price_col not in df_candidates.columns:
         return None, None, 0
@@ -127,13 +130,12 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
     if df_candidates_copy.empty:
         return None, None, 0
 
-    # --- CORRECCIÓN: Agregamos el producto al agrupamiento para no perderlo ---
+    # Agrupamos por factura y tomamos el primer producto que encontremos en esa factura
     invoice_sums_df = df_candidates_copy.groupby(invoice_col).agg(
         total_sum=('__monto_numeric__', 'sum'),
         client_code=(client_col, 'first'),
-        product_code=(product_col, 'first') # Tomamos el primer producto disponible de la factura
+        product_code=(product_col, 'first') 
     ).reset_index()
-    # --------------------------------------------------------------------------
 
     invoice_sums_df.columns = [invoice_col, 'total_sum', client_col, product_col]
 
@@ -246,11 +248,13 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         normalized_template_header = template_header.replace(' ', '').lower()
         df_column_name = None
         
+        # 1. Intento de coincidencia exacta con el mapa
         for df_col, template_col_match in df_column_map.items():
             if template_col_match.replace(' ', '').lower() == normalized_template_header:
                 df_column_name = df_col
                 break
         
+        # 2. Coincidencia difusa para detectar encabezados cortados
         if df_column_name is None:
             if "clase" in normalized_template_header and "pedido" in normalized_template_header:
                 df_column_name = "Clase de pedido"
@@ -344,6 +348,14 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
              sheet.column_dimensions[col_letter].width = large_text_cols[col_name]
         elif col_name in cols_to_resize:
             sheet.column_dimensions[col_letter].width = default_width
+    
+    # --- CORRECCIÓN FINAL: SE HA ELIMINADO EL FORZADO DE ENCABEZADOS ---
+    # Esto permite que si modificas tu Excel, el cambio se respete.
+    # for cell in sheet[1]:
+    #    val = str(cell.value).strip().lower().replace(' ', '')
+    #    if 'organizacion' in val and 'ven' in val:
+    #        cell.value = "Organizacion de Ven"
+    # ----------------------------------------------------------------------
             
     output_buffer = io.BytesIO()
     
@@ -688,12 +700,38 @@ with tab1:
         condicion_forzada = None  
         template_condicion = 'ZNOT'
 
+        # --- SE HAN ACTUALIZADO LOS VALORES POR DEFECTO SEGÚN TU IMAGEN ---
         PORTFOLIO_DEFAULTS = {
-            'R100': {'Clase de pedido': 'YNCR', 'Organizacion de Venta': 'R200', 'Canal de Distribucion': 'CA', 'Sector': 'R6'},
-            'C001': {'Clase de pedido': 'ZCDF', 'Organizacion de Venta': 'C001', 'Canal de Distribucion': 'CA', 'Sector': 'C1'},
-            '0700': {'Clase de pedido': 'Z1MA', 'Organizacion de Venta': '0702', 'Canal de Distribucion': 'DS', 'Sector': 'A1'},
-            '0600': {'Clase de pedido': 'Z1MA', 'Organizacion de Venta': '0602', 'Canal de Distribucion': 'DS', 'Sector': 'A1'},
+            'R100': {
+                'Clase de pedido': 'YNCR', 
+                'Organizacion de Venta': 'R200', 
+                'Canal de Distribucion': 'FB', # Actualizado
+                'Sector': 'E2',                # Actualizado
+                'CONDICION': 'YLIQ'            # Agregado
+            },
+            'C001': {
+                'Clase de pedido': 'ZCDF', 
+                'Organizacion de Venta': 'C001', 
+                'Canal de Distribucion': 'FB', # Actualizado
+                'Sector': 'E2',                # Actualizado
+                'CONDICION': 'ZXAM'            # Agregado
+            },
+            '0700': {
+                'Clase de pedido': 'Z1MA', 
+                'Organizacion de Venta': '0702', 
+                'Canal de Distribucion': 'FB', 
+                'Sector': 'E2',
+                'CONDICION': 'ZNOT'
+            },
+            '0600': {
+                'Clase de pedido': 'Z1MA', 
+                'Organizacion de Venta': '0602', 
+                'Canal de Distribucion': 'FB', # Actualizado
+                'Sector': 'E2',                # Actualizado
+                'CONDICION': 'ZNOT'
+            },
         }
+        # ------------------------------------------------------------------------------
 
         selected_portfolio_cod = st.session_state.get('portafolio_cod')
         assignment_mode = st.session_state.get('assignment_mode') 
@@ -716,24 +754,28 @@ with tab1:
             factura_keys = ['factura', 'nofactura', 'numerofactura', 'asignacion']
             col_factura = next((c for c in df_pre_filtros.columns if any(k in str(c).lower().replace(" ", "").replace("°", "") for k in factura_keys)), None)
 
-            cliente_keys = ['cliente', 'codcliente', 'solicitante']
-            producto_keys = ['producto', 'material', 'codigoproducto'] 
-            unidad_medida_keys = ['u.m venta', 'um venta', 'unidad venta', 'u. medida', 'umedida', 'um'] 
-            condicion_keys = ['condicion', 'codigocondicion', 'cond']
-            clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
-
+            # --- DETECCIÓN DE COLUMNAS ANTES DE LA LÓGICA DE SALDO ---
             col_monto = next((c for c in df_pre_filtros.columns if 'precio' in str(c).lower() and 'total' not in str(c).lower()), None)
             if col_monto is None:
                  col_monto = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in ['precio', 'neto', 'valor', 'monto']) and 'total' not in str(c).lower()), None)
             if col_monto is None:
                  col_monto = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in ['total'])), None)
-                 
-            col_cliente = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in cliente_keys)), None)
-            col_producto = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in producto_keys)), None)
-            col_unidad_medida = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in unidad_medida_keys)), None)
-            col_condicion = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in condicion_keys)), None)
-            col_clase_factura = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in clase_factura_keys)), None)
             
+            cliente_keys = ['cliente', 'codcliente', 'solicitante']
+            col_cliente = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in cliente_keys)), None)
+            
+            producto_keys = ['producto', 'material', 'codigoproducto'] 
+            col_producto = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in producto_keys)), None)
+            
+            unidad_medida_keys = ['u.m venta', 'um venta', 'unidad venta', 'u. medida', 'umedida', 'um'] 
+            col_unidad_medida = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in unidad_medida_keys)), None)
+            
+            condicion_keys = ['condicion', 'codigocondicion', 'cond']
+            col_condicion = next((c for c in df_pre_filtros.columns if any(k in str(c).lower() for k in condicion_keys)), None)
+            
+            clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
+            col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
+
             if not col_cliente or not col_factura or not col_monto:
                 st.error("Error: Revise los encabezados de su archivo (Solicitante/Cliente, Factura/Asignacion y Precio/Monto).")
                 st.stop()
@@ -776,6 +818,7 @@ with tab1:
                     else:
                         norm_to_originals.setdefault(orig.strip(), set()).add(orig)
 
+                # --- LÓGICA DE SALDO RESTANTE Y ACTUALIZACIÓN VISUAL ---
                 used_amount_map = {}
                 if st.session_state['stacked_invoices']:
                     for batch_df in st.session_state['stacked_invoices']:
@@ -813,10 +856,15 @@ with tab1:
                         return group
 
                     df_pre_filtros = df_pre_filtros.groupby(col_factura, group_keys=False).apply(reduce_balance)
+                    
+                    # Filtramos las que ya no tienen saldo
                     df_pre_filtros = df_pre_filtros[df_pre_filtros['__monto_numeric__'] > 0.01].copy()
                     
+                    # --- AQUÍ ESTÁ EL CAMBIO IMPORTANTE: Actualizar la columna VISUAL ---
                     df_pre_filtros[col_monto] = df_pre_filtros['__monto_numeric__'].apply(format_monto_local)
-                    
+                
+                # ---------------------------------------------------------------------------------
+
                 referenced_originals = set()
                 for idx, row in df_pre_filtros.iterrows():
                     row_invoice = str(row.get(col_factura, '')).strip()
@@ -942,18 +990,13 @@ with tab1:
                             elif assignment_mode == 'Estricto (Truncar)':
                                 df_para_mostrar_editor = df_para_mostrar_editor.drop(columns=['total_sum'], errors='ignore')
                             
-                            # --- CORRECCIÓN: Usar el producto que viene de la data, no forzar el del filtro ---
-                            # df_para_mostrar_editor[col_producto] = product_code_final_str if product_code_final_str else ''
                             if product_code_final_str and col_producto not in df_para_mostrar_editor.columns:
                                 df_para_mostrar_editor[col_producto] = product_code_final_str
                             elif col_producto in df_para_mostrar_editor.columns:
-                                # Si ya existe (porque viene del groupby), nos aseguramos de que no esté vacía
-                                # Si hay celdas vacías, podríamos rellenarlas con el filtro si existe
                                 if product_code_final_str:
                                      df_para_mostrar_editor[col_producto] = df_para_mostrar_editor[col_producto].replace('', product_code_final_str).fillna(product_code_final_str)
                             else:
                                  df_para_mostrar_editor[col_producto] = ''
-                            # ----------------------------------------------------------------------------------
 
                             df_para_mostrar_editor[col_cliente] = cliente_a_usar 
                             
