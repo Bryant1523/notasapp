@@ -216,6 +216,7 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
              return None
              
     header_row = 1
+    # SE AGREGO "Pedido Cliente" AL DICCIONARIO PARA QUE SE LLENE
     df_column_map = {
         "Clase de pedido": "Clase de pedido",
         "Organizacion de Venta": "Organizacion de Venta",
@@ -226,6 +227,7 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         "Fecha de Precio": "Fecha de Precio",
         "Fecha de Factura": "Fecha de Factura",
         "Motivo": "Motivo",
+        "Pedido Cliente": "Pedido Cliente", # <--- AQUI ESTA EL CAMBIO IMPORTANTE
         "Material": "Material",
         "Cantidad": "Cantidad",
         "U. MEDIDA": "U. MEDIDA", 
@@ -240,7 +242,8 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
     }
     excel_template_structure = []
     template_headers = {}
-    
+    used_df_columns = set() # PARA EVITAR COLUMNAS DUPLICADAS
+
     for cell in sheet[header_row]:
         template_header = str(cell.value).strip() if cell.value is not None else ''
         if not template_header: 
@@ -265,11 +268,20 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
             elif "sector" in normalized_template_header:
                 df_column_name = "Sector"
 
+        # --- CORRECCIÓN: EVITAR DUPLICADOS DE TEXTO CABECERA ---
+        if df_column_name == "TEXTO CABECERA" and "TEXTO CABECERA" in used_df_columns:
+            # Si ya encontramos una columna Texto Cabecera, saltamos la siguiente para que quede vacía (una sola casilla)
+            continue
+        # --------------------------------------------------------
+
         excel_template_structure.append({
             'letter': cell.column_letter,
             'df_column': df_column_name,
         })
         template_headers[template_header] = cell.column_letter
+        
+        if df_column_name:
+            used_df_columns.add(df_column_name)
     
     start_row = 2
     max_rows = sheet.max_row
@@ -324,20 +336,21 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
             if cell_value is not None:
                 sheet[f"{excel_col_letter}{row_idx}"] = cell_value
             
-            if df_col_name in ["ASIGNACION", "TEXTO CABECERA", "Observación", "Solicitante", "Material"]:
+            if df_col_name in ["ASIGNACION", "TEXTO CABECERA", "Observación", "Solicitante", "Material", "Pedido Cliente"]:
                  sheet[f"{excel_col_letter}{row_idx}"].alignment = Alignment(horizontal='left')
             if df_col_name in ["Cantidad", "Peso %", "VARIACION DE PRECIO", "Monto NC Asignado"]:
                 sheet[f"{excel_col_letter}{row_idx}"].alignment = Alignment(horizontal='right')
 
     cols_to_resize = [
         "Clase de pedido", "Organizacion de Venta", "Canal de Distribucion", "Sector", "Solicitante", 
-        "Fecha de Pedido", "Fecha de Precio", "Fecha de Factura", "Material", 
+        "Fecha de Pedido", "Fecha de Precio", "Fecha de Factura", "Material", "Pedido Cliente",
         "Cantidad", "U. MEDIDA", "CONDICION", "VARIACION DE PRECIO", "ASIGNACION", "Peso %", 
         "Monto NC Asignado"
     ]
     large_text_cols = {
         "VARIACION DE PRECIO": 18,
         "TEXTO CABECERA": 35,
+        "Pedido Cliente": 35,
         "Observación": 25,
         "Motivo": 8 
     }
@@ -1137,6 +1150,10 @@ with tab1:
             if ticket_number:
                 texto_cabecera += f" (Ticket {ticket_number})"
             df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
+            
+            # --- CAMBIO IMPORTANTE: COPIAR EL CONTENIDO DE TEXTO CABECERA A PEDIDO CLIENTE ---
+            df_para_mostrar_editor['Pedido Cliente'] = texto_cabecera 
+            # ---------------------------------------------------------------------------------
             
             selected_defaults = PORTFOLIO_DEFAULTS.get(selected_portfolio_cod)
 
