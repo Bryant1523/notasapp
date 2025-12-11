@@ -53,9 +53,13 @@ def detect_portfolio_code(df):
             unique_set.add(val) 
             unique_set.add(clean_leading_zeros(val)) 
         
-        if '702' in unique_set or '0702' in unique_set: return '0700'
-        if '602' in unique_set or '0602' in unique_set: return '0600'
-        if 'R200' in unique_set: return 'R100'
+        # AJUSTE PARA DETECTAR MEJOR ALIMENTOS POLAR (0700/0702)
+        if '702' in unique_set or '0702' in unique_set or '700' in unique_set or '0700' in unique_set: return '0700'
+        # AJUSTE PARA PRODUCTOS EFE (0600/0602)
+        if '602' in unique_set or '0602' in unique_set or '600' in unique_set or '0600' in unique_set: return '0600'
+        # AJUSTE PARA PEPSI (R200/R100)
+        if 'R200' in unique_set or 'R100' in unique_set: return 'R100'
+        # AJUSTE PARA CERVECERIA (C001)
         if 'C001' in unique_set: return 'C001'
 
     # ESTRATEGIA 2: Buscar por columna "Sociedad"
@@ -82,6 +86,8 @@ def detect_portfolio_code(df):
         unique_factura_codes = set(df[col_clase_factura].astype(str).str.strip().str.upper().unique())
         if any(code in unique_factura_codes for code in ['YP01', 'YP04', 'YP10']): return 'R100'
         if 'YC00' in unique_factura_codes: return 'C001'
+        if any(code in unique_factura_codes for code in ['ZSPN', 'X|', 'ZSCC']): 
+            return '0700'
 
     return '--'
 
@@ -216,7 +222,6 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
              return None
              
     header_row = 1
-    # SE AGREGO "Pedido Cliente" AL DICCIONARIO PARA QUE SE LLENE
     df_column_map = {
         "Clase de pedido": "Clase de pedido",
         "Organizacion de Venta": "Organizacion de Venta",
@@ -227,7 +232,7 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         "Fecha de Precio": "Fecha de Precio",
         "Fecha de Factura": "Fecha de Factura",
         "Motivo": "Motivo",
-        "Pedido Cliente": "Pedido Cliente", # <--- AQUI ESTA EL CAMBIO IMPORTANTE
+        "Pedido Cliente": "Pedido Cliente",
         "Material": "Material",
         "Cantidad": "Cantidad",
         "U. MEDIDA": "U. MEDIDA", 
@@ -242,7 +247,7 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
     }
     excel_template_structure = []
     template_headers = {}
-    used_df_columns = set() # PARA EVITAR COLUMNAS DUPLICADAS
+    used_df_columns = set()
 
     for cell in sheet[header_row]:
         template_header = str(cell.value).strip() if cell.value is not None else ''
@@ -251,13 +256,11 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         normalized_template_header = template_header.replace(' ', '').lower()
         df_column_name = None
         
-        # 1. Intento de coincidencia exacta con el mapa
         for df_col, template_col_match in df_column_map.items():
             if template_col_match.replace(' ', '').lower() == normalized_template_header:
                 df_column_name = df_col
                 break
         
-        # 2. Coincidencia difusa para detectar encabezados cortados
         if df_column_name is None:
             if "clase" in normalized_template_header and "pedido" in normalized_template_header:
                 df_column_name = "Clase de pedido"
@@ -268,11 +271,8 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
             elif "sector" in normalized_template_header:
                 df_column_name = "Sector"
 
-        # --- CORRECCIÓN: EVITAR DUPLICADOS DE TEXTO CABECERA ---
         if df_column_name == "TEXTO CABECERA" and "TEXTO CABECERA" in used_df_columns:
-            # Si ya encontramos una columna Texto Cabecera, saltamos la siguiente para que quede vacía (una sola casilla)
             continue
-        # --------------------------------------------------------
 
         excel_template_structure.append({
             'letter': cell.column_letter,
@@ -362,14 +362,6 @@ def create_excel_for_all_invoices(df_to_export, selected_portfolio, ticket_numbe
         elif col_name in cols_to_resize:
             sheet.column_dimensions[col_letter].width = default_width
     
-    # --- CORRECCIÓN FINAL: SE HA ELIMINADO EL FORZADO DE ENCABEZADOS ---
-    # Esto permite que si modificas tu Excel, el cambio se respete.
-    # for cell in sheet[1]:
-    #    val = str(cell.value).strip().lower().replace(' ', '')
-    #    if 'organizacion' in val and 'ven' in val:
-    #        cell.value = "Organizacion de Ven"
-    # ----------------------------------------------------------------------
-            
     output_buffer = io.BytesIO()
     
     try:
@@ -549,7 +541,8 @@ LOGO_FILENAME_MAP = {
     'R100': 'Pepsi-Cola.webp',
     'C001': 'Cervecería Polar (Completo).webp',
     '0600': 'Productos EFE.webp',
-    '--': 'Pepsi-Cola.webp', 
+    # LOGO POR DEFECTO: EMPRESAS POLAR
+    '--': 'image_8085bf.png', 
     '0700_SOLO': 'Alimentos Polar (Solo Logo).webp',
     'R100_SOLO': 'Pepsi-Cola (Solo Logo).webp', 
     'C001_SOLO': 'Cervecería Polar (Solo Logo).webp',
@@ -599,6 +592,14 @@ with st.sidebar:
 
     if st.session_state.get('df_full') is not None:
         
+        # --- NOMBRE DEL ARCHIVO CORTO ---
+        full_name = st.session_state.get('file_name', 'Desconocido')
+        # Cortar a 25 caracteres + "..." si es muy largo
+        short_name = full_name[:25] + "..." if len(full_name) > 25 else full_name
+        st.success(f"📂 Archivo: {short_name}")
+        
+        # --- SE ELIMINÓ EL SELECTOR DE PORTAFOLIO COMO PEDISTE ---
+
         with st.form(key='parametros_nc_form'):
             motivo_options = [
                 "Anulación documento",
@@ -645,10 +646,11 @@ with st.sidebar:
     limpiar_button = local_limpiar_button
     
     if limpiar_button:
+        # --- LÓGICA DE LIMPIEZA: SOLO BORRA FILTROS, MANTIENE ARCHIVO Y PORTAFOLIO ---
         keys_to_preserve = ['df_full', 'stacked_invoices', 'portafolio_cod', 'file_name']
-        keys_to_delete = [k for k in st.session_state.keys() if k not in keys_to_preserve]
-        for key in keys_to_delete:
-            del st.session_state[key]
+        for key in list(st.session_state.keys()):
+            if key not in keys_to_preserve:
+                del st.session_state[key]
         st.rerun()
 
 col_config_dict = {
@@ -713,21 +715,20 @@ with tab1:
         condicion_forzada = None  
         template_condicion = 'ZNOT'
 
-        # --- SE HAN ACTUALIZADO LOS VALORES POR DEFECTO SEGÚN TU IMAGEN ---
         PORTFOLIO_DEFAULTS = {
             'R100': {
                 'Clase de pedido': 'YNCR', 
                 'Organizacion de Venta': 'R200', 
-                'Canal de Distribucion': 'FB', # Actualizado
-                'Sector': 'E2',                # Actualizado
-                'CONDICION': 'YLIQ'            # Agregado
+                'Canal de Distribucion': 'FB', 
+                'Sector': 'E2',                
+                'CONDICION': 'YLIQ'            
             },
             'C001': {
                 'Clase de pedido': 'ZCDF', 
                 'Organizacion de Venta': 'C001', 
-                'Canal de Distribucion': 'FB', # Actualizado
-                'Sector': 'E2',                # Actualizado
-                'CONDICION': 'ZXAM'            # Agregado
+                'Canal de Distribucion': 'FB', 
+                'Sector': 'E2',                
+                'CONDICION': 'ZXAM'            
             },
             '0700': {
                 'Clase de pedido': 'Z1MA', 
@@ -739,12 +740,11 @@ with tab1:
             '0600': {
                 'Clase de pedido': 'Z1MA', 
                 'Organizacion de Venta': '0602', 
-                'Canal de Distribucion': 'FB', # Actualizado
-                'Sector': 'E2',                # Actualizado
+                'Canal de Distribucion': 'FB', 
+                'Sector': 'E2',                
                 'CONDICION': 'ZNOT'
             },
         }
-        # ------------------------------------------------------------------------------
 
         selected_portfolio_cod = st.session_state.get('portafolio_cod')
         assignment_mode = st.session_state.get('assignment_mode') 
@@ -1151,9 +1151,7 @@ with tab1:
                 texto_cabecera += f" (Ticket {ticket_number})"
             df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
             
-            # --- CAMBIO IMPORTANTE: COPIAR EL CONTENIDO DE TEXTO CABECERA A PEDIDO CLIENTE ---
             df_para_mostrar_editor['Pedido Cliente'] = texto_cabecera 
-            # ---------------------------------------------------------------------------------
             
             selected_defaults = PORTFOLIO_DEFAULTS.get(selected_portfolio_cod)
 
