@@ -416,6 +416,27 @@ def get_file_name(portfolio_cod, ticket, is_first=False, multiple_invoices=False
     else:
         return f"TICKET_SIN_NUMERO-{acronym}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
+# --- FUNCIÓN DE LIMPIEZA CORREGIDA: SOBRESCRIBE EL ESTADO CON "" ---
+def clear_form_data():
+    # Sobrescribir con cadena vacía fuerza a Streamlit a limpiar el input visualmente
+    keys_text = [
+        'filtro_cliente_cod',
+        'filtro_producto_cod',
+        'widget_monto_nc', 
+        'filtro_ticket_cod',
+        'monto_display'
+    ]
+    for key in keys_text:
+        if key in st.session_state:
+            st.session_state[key] = ""
+            
+    # Para el selectbox y valores internos, podemos borrar o resetear
+    if 'filtro_motivo' in st.session_state:
+        del st.session_state['filtro_motivo']
+        
+    if 'filtro_monto' in st.session_state:
+        st.session_state['filtro_monto'] = None
+
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(
     page_title="Notas de Crédito", 
@@ -541,7 +562,6 @@ LOGO_FILENAME_MAP = {
     'R100': 'Pepsi-Cola.webp',
     'C001': 'Cervecería Polar (Completo).webp',
     '0600': 'Productos EFE.webp',
-    # LOGO POR DEFECTO: EMPRESAS POLAR
     '--': 'image_8085bf.png', 
     '0700_SOLO': 'Alimentos Polar (Solo Logo).webp',
     'R100_SOLO': 'Pepsi-Cola (Solo Logo).webp', 
@@ -576,10 +596,8 @@ with st.sidebar:
         label_visibility="collapsed"
     ) 
 
-    # --- NOMBRE DE ARCHIVO: MOSTRAR ANTES DE CARGAR, OCULTAR DESPUÉS ---
     if uploaded_file and st.session_state.get('df_full') is None:
         full_name = uploaded_file.name
-        # Cortar a 25 caracteres + "..." si es muy largo
         short_name = full_name[:25] + "..." if len(full_name) > 25 else full_name
         st.info(f"📄 Archivo: {short_name}")
     
@@ -609,7 +627,6 @@ with st.sidebar:
                 "Promoción.Sell Out.Reconocimiento",
                 "Sin Motivo"
             ]
-            # --- CORRECCIÓN: AGREGADOS "KEY" A LOS INPUTS PARA PERMITIR LIMPIEZA ---
             st.selectbox("Motivo:", options=motivo_options, key="filtro_motivo")
             
             st.text_input("Cod. Cliente:", key="filtro_cliente_cod")
@@ -620,7 +637,7 @@ with st.sidebar:
                 "Monto NC:", 
                 value=st.session_state.get('monto_display', ''),
                 placeholder="",
-                key="widget_monto_nc" # Clave auxiliar para el widget
+                key="widget_monto_nc"
             )
             monto_nc_temp = convert_value_to_float(monto_input_str)
             st.session_state['filtro_monto'] = monto_nc_temp
@@ -639,17 +656,9 @@ with st.sidebar:
             
             submit_button = st.form_submit_button("Cargar", use_container_width=True)
 
-        local_limpiar_button = st.button("Limpiar", use_container_width=True) 
+        local_limpiar_button = st.button("Limpiar", use_container_width=True, on_click=clear_form_data)
         
     limpiar_button = local_limpiar_button
-    
-    if limpiar_button:
-        # --- LÓGICA DE LIMPIEZA: BORRA LAS CLAVES, REINICIANDO LOS WIDGETS ---
-        keys_to_preserve = ['df_full', 'stacked_invoices', 'portafolio_cod', 'file_name']
-        for key in list(st.session_state.keys()):
-            if key not in keys_to_preserve:
-                del st.session_state[key]
-        st.rerun()
 
 col_config_dict = {
     "Cod. Cliente": st.column_config.TextColumn("Cod. Cliente", width="small", help="Código del Cliente (Solicitante)"),
@@ -748,7 +757,6 @@ with tab1:
         assignment_mode = st.session_state.get('assignment_mode') 
         ticket_number = st.session_state.get('filtro_ticket_cod', '').strip() 
 
-        # --- SE CAMBIÓ LA LECTURA DE VARIABLES PARA USAR "st.session_state.get()" YA QUE AHORA USAMOS KEYS ---
         client_code_input_raw = st.session_state.get('filtro_cliente_cod', '').strip()
         client_code_list = clean_input_codes(client_code_input_raw) 
         
