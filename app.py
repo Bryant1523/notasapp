@@ -9,6 +9,8 @@ import numpy as np
 import re
 import base64
 
+# --- FUNCIONES AUXILIARES ---
+
 def clean_leading_zeros(code_str):
     if pd.isna(code_str) or code_str is None:
         return ''
@@ -32,26 +34,43 @@ def clean_input_codes(input_raw):
 
 
 def detect_portfolio_code(df):
+    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas" (o variaciones como Org. Vta)
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
+        # Busca combinaciones comunes: "org" + "ven" O "org" + "vta"
         if 'org' in c_clean and ('ven' in c_clean or 'vta' in c_clean):
             col_org_venta = col
             break
             
     if col_org_venta:
+        # Obtenemos los valores únicos convertidos a string, mayúsculas y sin espacios
         unique_vals = set(df[col_org_venta].astype(str).str.strip().str.upper().unique())
         
+        # Creamos un set con versiones limpias (sin ceros) y originales para asegurar coincidencia
         unique_set = set()
         for val in unique_vals:
             unique_set.add(val) 
             unique_set.add(clean_leading_zeros(val)) 
         
-        if '702' in unique_set or '0702' in unique_set or '700' in unique_set or '0700' in unique_set: return '0700'
-        if '602' in unique_set or '0602' in unique_set or '600' in unique_set or '0600' in unique_set: return '0600'
-        if 'R200' in unique_set or 'R100' in unique_set: return 'R100'
-        if 'C001' in unique_set: return 'C001'
+        # --- REGLAS DE DETECCIÓN EXACTAS SEGÚN TU SOLICITUD ---
+        # 0702 -> APC (Código interno 0700)
+        if '0702' in unique_set or '702' in unique_set: 
+            return '0700'
+            
+        # 0602 -> EFE (Código interno 0600)
+        if '0602' in unique_set or '602' in unique_set: 
+            return '0600'
+            
+        # R200 -> PCV (Código interno R100)
+        if 'R200' in unique_set: 
+            return 'R100'
+            
+        # C001 -> CYM (Código interno C001)
+        if 'C001' in unique_set: 
+            return 'C001'
 
+    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -67,6 +86,7 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
+    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -124,6 +144,7 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
     if df_candidates_copy.empty:
         return None, None, 0
 
+    # Agrupamos por factura y tomamos el primer producto que encontremos en esa factura
     invoice_sums_df = df_candidates_copy.groupby(invoice_col).agg(
         total_sum=('__monto_numeric__', 'sum'),
         client_code=(client_col, 'first'),
@@ -405,7 +426,6 @@ def get_file_name(portfolio_cod, ticket, is_first=False, multiple_invoices=False
 
 # --- FUNCIÓN DE LIMPIEZA CORREGIDA: SOBRESCRIBE EL ESTADO CON "" ---
 def clear_form_data():
-    # Sobrescribir con cadena vacía fuerza a Streamlit a limpiar el input visualmente
     keys_text = [
         'filtro_cliente_cod',
         'filtro_producto_cod',
@@ -417,7 +437,6 @@ def clear_form_data():
         if key in st.session_state:
             st.session_state[key] = ""
             
-    # Para el selectbox y valores internos, podemos borrar o resetear
     if 'filtro_motivo' in st.session_state:
         del st.session_state['filtro_motivo']
         
@@ -439,10 +458,12 @@ st.set_page_config(
 
 st.markdown("""
     <style>
+        /* OCULTAR FLECHA DE COLAPSAR SIDEBAR */
+        [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        
         header { visibility: hidden; }
         [data-testid="stDecoration"] { visibility: hidden; }
         [data-testid="stHeader"] { background-color: transparent; }
-        [data-testid="collapsedControl"] { visibility: visible !important; color: #00449C !important; z-index: 1000000; }
         
         .block-container { padding-top: 1rem !important; }
 
