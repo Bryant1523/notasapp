@@ -27,7 +27,6 @@ def clean_input_codes(input_raw):
     return list(set([c for c in cleaned_codes if c]))
 
 def detect_portfolio_code(df):
-    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas"
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
@@ -47,7 +46,6 @@ def detect_portfolio_code(df):
         if 'R200' in unique_set: return 'R100'
         if 'C001' in unique_set: return 'C001'
 
-    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -63,7 +61,6 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
-    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -429,7 +426,7 @@ st.set_page_config(
 
 # --- GESTIÓN DE VISIBILIDAD DE FLECHAS ---
 if 'arrows_visible' not in st.session_state:
-    st.session_state.arrows_visible = False # Por defecto, flechas ocultas
+    st.session_state.arrows_visible = True # CAMBIO: Por defecto visibles para que no se pierdan
 
 # BOTÓN EN LA PÁGINA PRINCIPAL PARA CONTROLAR EL MENÚ
 if st.button("☰ Mostrar/Ocultar Controles del Menú", key="main_toggle_btn", use_container_width=True):
@@ -437,7 +434,6 @@ if st.button("☰ Mostrar/Ocultar Controles del Menú", key="main_toggle_btn", u
     st.rerun()
 
 # Generación del CSS basado en el estado
-# Si arrows_visible es False, ocultamos el control. Si es True, no hacemos nada (se muestra).
 css_arrows = ""
 if not st.session_state.arrows_visible:
     css_arrows = """[data-testid="stSidebarCollapsedControl"] { display: none !important; }"""
