@@ -9,8 +9,6 @@ import numpy as np
 import re
 import base64
 
-# --- FUNCIONES AUXILIARES ---
-
 def clean_leading_zeros(code_str):
     if pd.isna(code_str) or code_str is None:
         return ''
@@ -34,35 +32,26 @@ def clean_input_codes(input_raw):
 
 
 def detect_portfolio_code(df):
-    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas" (o variaciones como Org. Vta)
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
-        # Busca combinaciones comunes: "org" + "ven" O "org" + "vta"
         if 'org' in c_clean and ('ven' in c_clean or 'vta' in c_clean):
             col_org_venta = col
             break
             
     if col_org_venta:
-        # Obtenemos los valores únicos convertidos a string, mayúsculas y sin espacios
         unique_vals = set(df[col_org_venta].astype(str).str.strip().str.upper().unique())
         
-        # Creamos un set con versiones limpias (sin ceros) y originales para asegurar coincidencia
         unique_set = set()
         for val in unique_vals:
             unique_set.add(val) 
             unique_set.add(clean_leading_zeros(val)) 
         
-        # AJUSTE PARA DETECTAR MEJOR ALIMENTOS POLAR (0700/0702)
         if '702' in unique_set or '0702' in unique_set or '700' in unique_set or '0700' in unique_set: return '0700'
-        # AJUSTE PARA PRODUCTOS EFE (0600/0602)
         if '602' in unique_set or '0602' in unique_set or '600' in unique_set or '0600' in unique_set: return '0600'
-        # AJUSTE PARA PEPSI (R200/R100)
         if 'R200' in unique_set or 'R100' in unique_set: return 'R100'
-        # AJUSTE PARA CERVECERIA (C001)
         if 'C001' in unique_set: return 'C001'
 
-    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -78,7 +67,6 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
-    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -136,7 +124,6 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
     if df_candidates_copy.empty:
         return None, None, 0
 
-    # Agrupamos por factura y tomamos el primer producto que encontremos en esa factura
     invoice_sums_df = df_candidates_copy.groupby(invoice_col).agg(
         total_sum=('__monto_numeric__', 'sum'),
         client_code=(client_col, 'first'),
@@ -1318,3 +1305,4 @@ with tab2:
                 st.session_state['stacked_invoices'] = []
                 st.success("Todos los tickets han sido limpiados.")
                 st.rerun()
+
