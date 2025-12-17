@@ -27,7 +27,6 @@ def clean_input_codes(input_raw):
     return list(set([c for c in cleaned_codes if c]))
 
 def detect_portfolio_code(df):
-    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas"
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
@@ -47,7 +46,6 @@ def detect_portfolio_code(df):
         if 'R200' in unique_set: return 'R100'
         if 'C001' in unique_set: return 'C001'
 
-    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -63,7 +61,6 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
-    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -419,7 +416,7 @@ st.set_page_config(
     page_title="Notas de Crédito", 
     page_icon="🔴🔵", 
     layout="wide",
-    initial_sidebar_state="expanded", # Sidebar abierta por defecto
+    initial_sidebar_state="expanded",
     menu_items={
         'Get Help': 'https://www.google.com',
         'Report a bug': 'https://www.google.com',
@@ -427,11 +424,21 @@ st.set_page_config(
     }
 ) 
 
+# --- CSS DEFINITIVO: ASEGURAR QUE LAS FLECHAS SEAN VISIBLES ---
 st.markdown("""
     <style>
-        header { visibility: hidden; }
+        /* OCULTAR SOLO LA DECORACIÓN (Línea de colores) */
         [data-testid="stDecoration"] { visibility: hidden; }
+        
+        /* HEADER TRANSPARENTE */
         [data-testid="stHeader"] { background-color: transparent; }
+        
+        /* ASEGURAR QUE LA FLECHA DEL MENÚ SEA VISIBLE Y DE COLOR AZUL */
+        [data-testid="collapsedControl"] { 
+            visibility: visible !important; 
+            display: block !important;
+            color: #00449C !important;
+        }
         
         .block-container { padding-top: 1rem !important; }
 
