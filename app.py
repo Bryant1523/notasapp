@@ -34,27 +34,46 @@ def clean_input_codes(input_raw):
 
 
 def detect_portfolio_code(df):
-    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas" (o variaciones como Org. Vta)
+    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas" (Org.Ventas)
     col_org_venta = None
     for col in df.columns:
+        # Limpieza: quitamos puntos, espacios, guiones bajos y convertimos a minúsculas
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
+        
+        # Busca combinaciones comunes: "org" + "ven" O "org" + "vta"
+        # Esto detectará "Org.Ventas", "Org. Ventas", "Organizacion de Ventas", etc.
         if 'org' in c_clean and ('ven' in c_clean or 'vta' in c_clean):
             col_org_venta = col
             break
             
     if col_org_venta:
+        # Obtenemos los valores únicos convertidos a string, mayúsculas y sin espacios
         unique_vals = set(df[col_org_venta].astype(str).str.strip().str.upper().unique())
+        
+        # Creamos un set con versiones limpias (sin ceros) y originales para asegurar coincidencia
         unique_set = set()
         for val in unique_vals:
             unique_set.add(val) 
             unique_set.add(clean_leading_zeros(val)) 
         
-        if '0702' in unique_set or '702' in unique_set: return '0700'
-        if '0602' in unique_set or '602' in unique_set: return '0600'
-        if 'R200' in unique_set: return 'R100'
-        if 'C001' in unique_set: return 'C001'
+        # --- REGLAS DE DETECCIÓN EXACTAS SEGÚN TU SOLICITUD ---
+        # 0702 -> APC (Código interno 0700)
+        if '0702' in unique_set or '702' in unique_set: 
+            return '0700'
+            
+        # 0602 -> EFE (Código interno 0600)
+        if '0602' in unique_set or '602' in unique_set: 
+            return '0600'
+            
+        # R200 -> PCV (Código interno R100)
+        if 'R200' in unique_set: 
+            return 'R100'
+            
+        # C001 -> CYM (Código interno C001)
+        if 'C001' in unique_set: 
+            return 'C001'
 
-    # ESTRATEGIA 2: Buscar por columna "Sociedad"
+    # ESTRATEGIA 2: Buscar por columna "Sociedad" (Fallback)
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -78,7 +97,8 @@ def detect_portfolio_code(df):
         unique_factura_codes = set(df[col_clase_factura].astype(str).str.strip().str.upper().unique())
         if any(code in unique_factura_codes for code in ['YP01', 'YP04', 'YP10']): return 'R100'
         if 'YC00' in unique_factura_codes: return 'C001'
-        if any(code in unique_factura_codes for code in ['ZSPN', 'X|', 'ZSCC']): return '0700'
+        if any(code in unique_factura_codes for code in ['ZSPN', 'X|', 'ZSCC']): 
+            return '0700' # Default a APC si no hay Org Venta explícita, pero EFE también usa ZSPN
 
     return '--'
 
@@ -127,6 +147,7 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
     if df_candidates_copy.empty:
         return None, None, 0
 
+    # Agrupamos por factura y tomamos el primer producto que encontremos en esa factura
     invoice_sums_df = df_candidates_copy.groupby(invoice_col).agg(
         total_sum=('__monto_numeric__', 'sum'),
         client_code=(client_col, 'first'),
@@ -142,13 +163,16 @@ def find_invoices_by_total_sum(df_candidates, target_amount, invoice_col, price_
         df_selected_invoices = pd.DataFrame(best_single_invoice_df)
     else:
         invoice_sums_df.sort_values(by='total_sum', ascending=False, inplace=True)
+        
         chosen_invoices_data = []
         current_sum = 0
+        
         for _, row in invoice_sums_df.iterrows():
             if current_sum >= target_amount:
                 break
             chosen_invoices_data.append(row.to_dict())
             current_sum += row['total_sum']
+        
         df_selected_invoices = pd.DataFrame(chosen_invoices_data)
     
     if df_selected_invoices.empty:
@@ -403,7 +427,7 @@ def get_file_name(portfolio_cod, ticket, is_first=False, multiple_invoices=False
     else:
         return f"TICKET_SIN_NUMERO-{acronym}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
-# --- FUNCIÓN DE LIMPIEZA ---
+# --- FUNCIÓN DE LIMPIEZA CORREGIDA: SOBRESCRIBE EL ESTADO CON "" ---
 def clear_form_data():
     keys_text = [
         'filtro_cliente_cod',
@@ -435,109 +459,90 @@ st.set_page_config(
     }
 ) 
 
-# --- GESTIÓN DE VISIBILIDAD DE FLECHAS (CSS DINÁMICO) ---
-# Variable de estado para controlar si las flechas se ven o no
-if 'hide_arrows' not in st.session_state:
-    st.session_state.hide_arrows = True # Por defecto ocultas
-
-# Botón para alternar visibilidad (ESTO ES LA SOLUCIÓN AL PROBLEMA DE "VOLVER A PONER")
-col_toggle, col_dummy = st.columns([2, 8])
-with col_toggle:
-    if st.button("👁️ Mostrar/Ocultar Flechas del Menú", key="toggle_arrows"):
-        st.session_state.hide_arrows = not st.session_state.hide_arrows
-        st.rerun()
-
-# Generación del CSS basado en el estado
-css_arrows = ""
-if st.session_state.hide_arrows:
-    css_arrows = """[data-testid="stSidebarCollapsedControl"] { display: none !important; }"""
-
-st.markdown(f"""
+st.markdown("""
     <style>
-        /* CSS DINÁMICO PARA FLECHAS */
-        {css_arrows}
+        header { visibility: hidden; }
+        [data-testid="stDecoration"] { visibility: hidden; }
+        [data-testid="stHeader"] { background-color: transparent; }
+        [data-testid="collapsedControl"] { visibility: visible !important; color: #00449C !important; z-index: 1000000; }
         
-        header {{ visibility: hidden; }}
-        [data-testid="stDecoration"] {{ visibility: hidden; }}
-        [data-testid="stHeader"] {{ background-color: transparent; }}
-        
-        .block-container {{ padding-top: 1rem !important; }}
+        .block-container { padding-top: 1rem !important; }
 
         section[data-testid="stSidebar"] [data-testid="stFileUploader"],
         section[data-testid="stSidebar"] [data-testid="stButton"],
         section[data-testid="stSidebar"] [data-testid="stTextInput"],
-        section[data-testid="stSidebar"] [data-testid="stSelectbox"] {{
+        section[data-testid="stSidebar"] [data-testid="stSelectbox"] {
             margin-bottom: 12px !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] section[data-testid="stFileUploadDropzone"] {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] section[data-testid="stFileUploadDropzone"] {
             min-height: auto !important;
             padding: 0.75rem !important; 
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stFileUploaderInstructions"] {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stFileUploaderInstructions"] {
             padding: 0 !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] p {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] p {
             font-size: 0.8rem;
             margin-bottom: 0.25rem;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] button {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
             padding: 2px 8px;
             font-size: 0.8rem;
-        }}
+        }
 
-        section[data-testid="stSidebar"] {{
+        section[data-testid="stSidebar"] {
             padding-top: 5px !important;
-        }}
+        }
         
-        section[data-testid="stSidebar"] button {{
+        section[data-testid="stSidebar"] button {
             background-color: white !important;
             border-color: #00449C !important;
             color: #00449C !important;
-        }}
-        section[data-testid="stSidebar"] button:hover {{
+        }
+        section[data-testid="stSidebar"] button:hover {
             background-color: #f0f2f6 !important;
             border-color: #00449C !important;
             color: #00449C !important;
-        }}
+        }
         
-        section[data-testid="stSidebar"] [data-testid="stFileUploader"] {{ margin-bottom: 12px !important; }}
-        section[data-testid="stSidebar"] [data-testid="stButton"] {{ margin-bottom: 12px !important; }}
-        [data-testid="stForm"] {{ margin-top: 0px !important; border: none !important; padding: 0 !important; }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploader"] { margin-bottom: 12px !important; }
+        section[data-testid="stSidebar"] [data-testid="stButton"] { margin-bottom: 12px !important; }
+        [data-testid="stForm"] { margin-top: 0px !important; border: none !important; padding: 0 !important; }
         
-        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label {{ color: initial !important; }}
-        [data-testid="stSidebar"] .stRadio label span {{ color: initial; }}
+        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label { color: initial !important; }
+        [data-testid="stSidebar"] .stRadio label span { color: initial; }
 
-        [data-testid="stSidebar"] div.stSelectbox, [data-testid="stSidebar"] div.stTextInput {{
+        [data-testid="stSidebar"] div.stSelectbox, [data-testid="stSidebar"] div.stTextInput {
             background-color: white !important;
             border-radius: 5px;
-        }}
+        }
         [data-testid="stSidebar"] div.stSelectbox div[data-testid="stInputContainer"],
-        [data-testid="stSidebar"] div.stTextInput div[data-testid="stInputContainer"] {{
+        [data-testid="stSidebar"] div.stTextInput div[data-testid="stInputContainer"] {
             background-color: white !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stImage"] {{
+        [data-testid="stSidebar"] [data-testid="stImage"] {
             display: flex; justify-content.center; margin-left: auto; margin-right: auto; margin-top: 5px;
-        }}
+        }
         
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul {{ display: none; }}
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul { display: none; }
         [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy,
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p {{ color: #00449C; }}
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg {{ fill: #00449C; }}
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p { color: #00449C; }
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg { fill: #00449C; }
         
-        .logo-container-right {{ display: none; }}
-        [data-testid="stHorizontalBlock"] h1 {{ margin-top: 0px !important; padding-top: 0px !important; }}
+        .logo-container-right { display: none; }
+        [data-testid="stHorizontalBlock"] h1 { margin-top: 0px !important; padding-top: 0px !important; }
 
-        li[role="option"] span {{
+        li[role="option"] span {
             white-space: normal !important; line-height: 1.2 !important; height: auto !important;
             overflow: visible !important; text-overflow: clip !important;
-        }}
+        }
         
-        div[data-baseweb="popover"] {{ max-width: 90vw !important; }}
+        div[data-baseweb="popover"] { max-width: 90vw !important; }
     </style>
 """, unsafe_allow_html=True)
 
