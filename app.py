@@ -27,6 +27,7 @@ def clean_input_codes(input_raw):
     return list(set([c for c in cleaned_codes if c]))
 
 def detect_portfolio_code(df):
+    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas"
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
@@ -46,6 +47,7 @@ def detect_portfolio_code(df):
         if 'R200' in unique_set: return 'R100'
         if 'C001' in unique_set: return 'C001'
 
+    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -61,6 +63,7 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
+    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -416,7 +419,7 @@ st.set_page_config(
     page_title="Notas de Crédito", 
     page_icon="🔴🔵", 
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded", # Sidebar abierta por defecto
     menu_items={
         'Get Help': 'https://www.google.com',
         'Report a bug': 'https://www.google.com',
@@ -424,106 +427,89 @@ st.set_page_config(
     }
 ) 
 
-# --- GESTIÓN DE VISIBILIDAD DE FLECHAS ---
-if 'arrows_visible' not in st.session_state:
-    st.session_state.arrows_visible = True # CAMBIO: Por defecto visibles para que no se pierdan
-
-# BOTÓN EN LA PÁGINA PRINCIPAL PARA CONTROLAR EL MENÚ
-if st.button("☰ Mostrar/Ocultar Controles del Menú", key="main_toggle_btn", use_container_width=True):
-    st.session_state.arrows_visible = not st.session_state.arrows_visible
-    st.rerun()
-
-# Generación del CSS basado en el estado
-css_arrows = ""
-if not st.session_state.arrows_visible:
-    css_arrows = """[data-testid="stSidebarCollapsedControl"] { display: none !important; }"""
-
-st.markdown(f"""
+st.markdown("""
     <style>
-        /* CSS DINÁMICO PARA FLECHAS */
-        {css_arrows}
+        header { visibility: hidden; }
+        [data-testid="stDecoration"] { visibility: hidden; }
+        [data-testid="stHeader"] { background-color: transparent; }
         
-        header {{ visibility: hidden; }}
-        [data-testid="stDecoration"] {{ visibility: hidden; }}
-        [data-testid="stHeader"] {{ background-color: transparent; }}
-        
-        .block-container {{ padding-top: 1rem !important; }}
+        .block-container { padding-top: 1rem !important; }
 
         section[data-testid="stSidebar"] [data-testid="stFileUploader"],
         section[data-testid="stSidebar"] [data-testid="stButton"],
         section[data-testid="stSidebar"] [data-testid="stTextInput"],
-        section[data-testid="stSidebar"] [data-testid="stSelectbox"] {{
+        section[data-testid="stSidebar"] [data-testid="stSelectbox"] {
             margin-bottom: 12px !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] section[data-testid="stFileUploadDropzone"] {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] section[data-testid="stFileUploadDropzone"] {
             min-height: auto !important;
             padding: 0.75rem !important; 
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stFileUploaderInstructions"] {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] [data-testid="stFileUploaderInstructions"] {
             padding: 0 !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] p {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] p {
             font-size: 0.8rem;
             margin-bottom: 0.25rem;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] button {{
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] button {
             padding: 2px 8px;
             font-size: 0.8rem;
-        }}
+        }
 
-        section[data-testid="stSidebar"] {{
+        section[data-testid="stSidebar"] {
             padding-top: 5px !important;
-        }}
+        }
         
-        section[data-testid="stSidebar"] button {{
+        section[data-testid="stSidebar"] button {
             background-color: white !important;
             border-color: #00449C !important;
             color: #00449C !important;
-        }}
-        section[data-testid="stSidebar"] button:hover {{
+        }
+        section[data-testid="stSidebar"] button:hover {
             background-color: #f0f2f6 !important;
             border-color: #00449C !important;
             color: #00449C !important;
-        }}
+        }
         
-        section[data-testid="stSidebar"] [data-testid="stFileUploader"] {{ margin-bottom: 12px !important; }}
-        section[data-testid="stSidebar"] [data-testid="stButton"] {{ margin-bottom: 12px !important; }}
-        [data-testid="stForm"] {{ margin-top: 0px !important; border: none !important; padding: 0 !important; }}
+        section[data-testid="stSidebar"] [data-testid="stFileUploader"] { margin-bottom: 12px !important; }
+        section[data-testid="stSidebar"] [data-testid="stButton"] { margin-bottom: 12px !important; }
+        [data-testid="stForm"] { margin-top: 0px !important; border: none !important; padding: 0 !important; }
         
-        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label {{ color: initial !important; }}
-        [data-testid="stSidebar"] .stRadio label span {{ color: initial; }}
+        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] label { color: initial !important; }
+        [data-testid="stSidebar"] .stRadio label span { color: initial; }
 
-        [data-testid="stSidebar"] div.stSelectbox, [data-testid="stSidebar"] div.stTextInput {{
+        [data-testid="stSidebar"] div.stSelectbox, [data-testid="stSidebar"] div.stTextInput {
             background-color: white !important;
             border-radius: 5px;
-        }}
+        }
         [data-testid="stSidebar"] div.stSelectbox div[data-testid="stInputContainer"],
-        [data-testid="stSidebar"] div.stTextInput div[data-testid="stInputContainer"] {{
+        [data-testid="stSidebar"] div.stTextInput div[data-testid="stInputContainer"] {
             background-color: white !important;
-        }}
+        }
 
-        [data-testid="stSidebar"] [data-testid="stImage"] {{
+        [data-testid="stSidebar"] [data-testid="stImage"] {
             display: flex; justify-content.center; margin-left: auto; margin-right: auto; margin-top: 5px;
-        }}
+        }
         
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul {{ display: none; }}
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] ul { display: none; }
         [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy,
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p {{ color: #00449C; }}
-        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg {{ fill: #00449C; }}
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy p { color: #00449C; }
+        [data-testid="stSidebar"] [data-testid="stFileUploader"] .st-emotion-cache-1pxpzwy svg { fill: #00449C; }
         
-        .logo-container-right {{ display: none; }}
-        [data-testid="stHorizontalBlock"] h1 {{ margin-top: 0px !important; padding-top: 0px !important; }}
+        .logo-container-right { display: none; }
+        [data-testid="stHorizontalBlock"] h1 { margin-top: 0px !important; padding-top: 0px !important; }
 
-        li[role="option"] span {{
+        li[role="option"] span {
             white-space: normal !important; line-height: 1.2 !important; height: auto !important;
             overflow: visible !important; text-overflow: clip !important;
-        }}
+        }
         
-        div[data-baseweb="popover"] {{ max-width: 90vw !important; }}
+        div[data-baseweb="popover"] { max-width: 90vw !important; }
     </style>
 """, unsafe_allow_html=True)
 
