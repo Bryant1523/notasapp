@@ -27,6 +27,7 @@ def clean_input_codes(input_raw):
     return list(set([c for c in cleaned_codes if c]))
 
 def detect_portfolio_code(df):
+    # ESTRATEGIA 1: Buscar por columna "Organización de Ventas"
     col_org_venta = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '').replace('.', '').replace('_', '')
@@ -46,6 +47,7 @@ def detect_portfolio_code(df):
         if 'R200' in unique_set: return 'R100'
         if 'C001' in unique_set: return 'C001'
 
+    # ESTRATEGIA 2: Buscar por columna "Sociedad"
     col_sociedad = None
     for col in df.columns:
         c_clean = str(col).lower().replace(' ', '')
@@ -61,6 +63,7 @@ def detect_portfolio_code(df):
             if 'cervecer' in val or 'cerveceria' in val: return 'C001'
             if 'efe' in val: return '0600'
 
+    # ESTRATEGIA 3: Fallback por Clase de Factura
     clase_factura_keys = ['clase de factura', 'clasefactura', 'clase_factura', 'clase.factura', 'cl.f'] 
     col_clase_factura = next((c for c in df.columns if any(k in str(c).lower().replace(' ', '') for k in clase_factura_keys)), None)
 
@@ -424,21 +427,21 @@ st.set_page_config(
     }
 ) 
 
-# --- CSS DEFINITIVO: ASEGURAR QUE LAS FLECHAS SEAN VISIBLES ---
+# --- CONFIGURACIÓN DE MAPEO DE MOTIVOS ---
+NCF_MAPPING = {
+    "Diferencia en Precio": "NCF.1",
+    "Descuento no Reflejado": "NCF.2",
+    "Promoción / Sell Out / Reconocimiento": "NCF.3",
+    "Grand Slam": "NCF.4",
+    "Avisos / Cabezales / Publicidad": "NCF.5",
+    "Anulación documento": "NCF.6"
+}
+
 st.markdown("""
     <style>
-        /* OCULTAR SOLO LA DECORACIÓN (Línea de colores) */
+        header { visibility: hidden; }
         [data-testid="stDecoration"] { visibility: hidden; }
-        
-        /* HEADER TRANSPARENTE */
         [data-testid="stHeader"] { background-color: transparent; }
-        
-        /* ASEGURAR QUE LA FLECHA DEL MENÚ SEA VISIBLE Y DE COLOR AZUL */
-        [data-testid="collapsedControl"] { 
-            visibility: visible !important; 
-            display: block !important;
-            color: #00449C !important;
-        }
         
         .block-container { padding-top: 1rem !important; }
 
@@ -601,15 +604,10 @@ with st.sidebar:
     if st.session_state.get('df_full') is not None:
         
         with st.form(key='parametros_nc_form'):
-            motivo_options = [
-                "Anulación documento",
-                "Avisos.Cabezales.Publicidad",
-                "Descuento no Reflejado",
-                "Diferencia en Precio",
-                "Grand Slam",
-                "Promoción.Sell Out.Reconocimiento",
-                "Sin Motivo"
-            ]
+            # --- USAMOS LA LISTA DE CLAVES DEL DICCIONARIO COMO OPCIONES ---
+            motivo_options = list(NCF_MAPPING.keys())
+            motivo_options.append("Sin Motivo") 
+            
             st.selectbox("Motivo:", options=motivo_options, key="filtro_motivo")
             
             st.text_input("Cod. Cliente:", key="filtro_cliente_cod")
@@ -935,7 +933,15 @@ with tab1:
                     product_code_final_str = product_code_list[0] if product_code_list else ''
 
                     if product_code_list:
-                        df_temp_for_coverage = df_temp_all_lines[df_temp_all_lines[col_factura].isin(invoices_with_product)].copy()
+                        # --- MODIFICACIÓN CLAVE: FILTRO ESTRICTO ---
+                        # Solo mantenemos las filas cuyo código de producto coincide con el filtro.
+                        df_temp_for_coverage = df_temp_all_lines[df_temp_all_lines[col_producto].astype(str).isin(product_code_list)].copy()
+                        
+                        # Si después de filtrar no queda nada (por ejemplo, el producto existe en el archivo pero no en las facturas de ese cliente), mostramos error.
+                        if df_temp_for_coverage.empty:
+                             st.error(f"No se encontraron facturas para el cliente {', '.join(client_code_list)} que contengan el producto {', '.join(product_code_list)}.")
+                             df_para_mostrar_editor = pd.DataFrame()
+                             st.stop()
                     else:
                         df_temp_for_coverage = df_temp_all_lines.copy()
                 else:
@@ -1132,15 +1138,17 @@ with tab1:
                  
             selected_motivo = st.session_state.get('filtro_motivo')
             
+            ncf_code = NCF_MAPPING.get(selected_motivo, "NCF.1") 
+            
             if selected_motivo == "Sin Motivo":
-                texto_cabecera = "NCF.1"
+                 texto_cabecera = "NCF.1"
             else:
-                texto_cabecera = f"NCF.1 {selected_motivo}"
+                 texto_cabecera = f"{ncf_code} {selected_motivo}"
             
             if ticket_number:
                 texto_cabecera += f" (Ticket {ticket_number})"
-            df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
             
+            df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
             df_para_mostrar_editor['Pedido Cliente'] = texto_cabecera 
             
             selected_defaults = PORTFOLIO_DEFAULTS.get(selected_portfolio_cod)
@@ -1301,3 +1309,4 @@ with tab2:
                 st.session_state['stacked_invoices'] = []
                 st.success("Todos los tickets han sido limpiados.")
                 st.rerun()
+
