@@ -20,17 +20,11 @@ def clean_leading_zeros(code_str):
     return code_str.lstrip('0')
 
 def clean_input_codes(input_raw):
-    """
-    MODIFICADO: Ahora separa por comas, espacios, tabulaciones o saltos de línea 
-    (Funciona igual que SAP al pegar desde Excel).
-    """
     if not input_raw:
         return []
-    # Usamos regex para separar por cualquier espacio en blanco (incluye saltos de línea) o comas/puntos y coma
-    codes = re.split(r'[\n\r\s,;]+', input_raw)
-    cleaned_codes = [clean_leading_zeros(c.strip()) for c in codes if c.strip()]
-    # Eliminar duplicados manteniendo el orden
-    return list(dict.fromkeys(cleaned_codes))
+    codes = [c.strip() for c in input_raw.split(',') if c.strip()]
+    cleaned_codes = [clean_leading_zeros(c) for c in codes]
+    return list(set([c for c in cleaned_codes if c]))
 
 def detect_portfolio_code(df):
     # ESTRATEGIA 1: Buscar por columna "Organización de Ventas"
@@ -616,8 +610,7 @@ with st.sidebar:
             
             st.selectbox("Motivo:", options=motivo_options, key="filtro_motivo")
             
-            # --- MODIFICADO: Ahora es text_area para permitir múltiples códigos de SAP/Excel ---
-            st.text_area("Cod. Cliente:", key="filtro_cliente_cod", height=100, help="Puedes pegar una columna entera de Excel aquí")
+            st.text_input("Cod. Cliente:", key="filtro_cliente_cod")
             
             st.text_input("Cod. Producto:", key="filtro_producto_cod")
           
@@ -661,7 +654,6 @@ tab1, tab2 = st.tabs(["Generador de Notas de Crédito", "Tickets Generados"])
 
 with tab1:
     if st.session_state.get('df_full') is None:
-        # LOGO EMPRESAS POLAR POR DEFECTO
         empresas_polar_logo_filename = LOGO_FILENAME_MAP.get('EMPRESAS_POLAR')
         logo_base64 = None
         if empresas_polar_logo_filename and os.path.exists(os.path.join(BASE_DIR, empresas_polar_logo_filename)):
@@ -746,7 +738,6 @@ with tab1:
         assignment_mode = st.session_state.get('assignment_mode') 
         ticket_number = st.session_state.get('filtro_ticket_cod', '').strip() 
 
-        # --- SECCIÓN DE PROCESAMIENTO MULTI-CÓDIGO ---
         client_code_input_raw = st.session_state.get('filtro_cliente_cod', '').strip()
         client_code_list = clean_input_codes(client_code_input_raw) 
         
@@ -828,7 +819,7 @@ with tab1:
                     else:
                         norm_to_originals.setdefault(orig.strip(), set()).add(orig)
 
-                # --- LÓGICA DE SALDO RESTANTE ---
+                # --- LÓGICA DE SALDO RESTANTE Y ACTUALIZACIÓN VISUAL ---
                 used_amount_map = {}
                 if st.session_state['stacked_invoices']:
                     for batch_df in st.session_state['stacked_invoices']:
@@ -866,9 +857,15 @@ with tab1:
                         return group
 
                     df_pre_filtros = df_pre_filtros.groupby(col_factura, group_keys=False).apply(reduce_balance)
+                    
+                    # Filtramos las que ya no tienen saldo
                     df_pre_filtros = df_pre_filtros[df_pre_filtros['__monto_numeric__'] > 0.01].copy()
+                    
+                    # --- AQUÍ ESTÁ EL CAMBIO IMPORTANTE: Actualizar la columna VISUAL ---
                     df_pre_filtros[col_monto] = df_pre_filtros['__monto_numeric__'].apply(format_monto_local)
                 
+                # ---------------------------------------------------------------------------------
+
                 referenced_originals = set()
                 for idx, row in df_pre_filtros.iterrows():
                     row_invoice = str(row.get(col_factura, '')).strip()
@@ -888,85 +885,207 @@ with tab1:
                                         referenced_originals.add(original_invoice)
 
                 if referenced_originals:
+                    initial_rows = len(df_pre_filtros)
                     df_pre_filtros = df_pre_filtros[~df_pre_filtros[col_factura].astype(str).str.strip().isin(referenced_originals)].copy()
+                    final_rows = len(df_pre_filtros)
 
             df_temp_validation = df_pre_filtros.copy()
             
             if client_code_list and col_cliente and col_cliente in df_temp_validation.columns:
-                df_temp_validation[col_cliente] = df_temp_validation[col_cliente].astype(str).apply(clean_leading_zeros)
+                df_temp_validation[col_cliente] = df_temp_validation[col_cliente].astype(str)
                 
                 if not df_temp_validation[col_cliente].isin(client_code_list).any():
-                    st.error(f"Error: Ninguno de los Códigos de Cliente ingresados existe en el archivo cargado.")
+                    st.error(f"Error: Ninguno de los Códigos de Cliente ingresados ({', '.join(client_code_list)}) existe en el archivo cargado (o se filtró por Cl.F.).")
                     st.stop()
             
             if monto_nc is not None and monto_nc > 0:
                 
                 if not client_code_list:
-                    st.error(" **ERROR:** Debe ingresar al menos un **Código de Cliente**.")
+                    st.error(" **ERROR:** Debe ingresar al menos un **Código de Cliente** para que el sistema pueda buscar las facturas que cubran el Monto de la Nota de Crédito.")
                     df_para_mostrar_editor = pd.DataFrame()
                     st.stop()
                 
                 df_temp_all_lines = df_pre_filtros.copy()
                 
                 if client_code_list and col_cliente and col_cliente in df_temp_all_lines.columns:
-                    df_temp_all_lines[col_cliente] = df_temp_all_lines[col_cliente].astype(str).apply(clean_leading_zeros)
+                    df_temp_all_lines[col_cliente] = df_temp_all_lines[col_cliente].astype(str)
+        
                     df_temp_all_lines = df_temp_all_lines[df_temp_all_lines[col_cliente].isin(client_code_list)].copy()
                     
                     if df_temp_all_lines.empty:
-                        st.error(f"No se encontraron facturas para los clientes ingresados.")
+                        st.error(f"No se encontraron facturas para los clientes: {', '.join(client_code_list)} (o fueron filtradas por Cl.F.).")
                         st.stop()
                 
+                invoices_with_product = []
+        
                 if product_code_list and col_producto and col_producto in df_temp_all_lines.columns:
-                    df_temp_for_coverage = df_temp_all_lines[df_temp_all_lines[col_producto].astype(str).isin(product_code_list)].copy()
-                    if df_temp_for_coverage.empty:
-                         st.error(f"No se encontraron facturas con los productos indicados.")
-                         df_para_mostrar_editor = pd.DataFrame()
-                         st.stop()
+                    
+                    df_product_filtered = df_temp_all_lines[df_temp_all_lines[col_producto].astype(str).isin(product_code_list)].copy()
+                    
+                    if df_product_filtered.empty:
+                        if product_code_list: 
+                            st.error(f"No se encontraron facturas para los clientes **{', '.join(client_code_list)}** que también contengan alguno de los Productos **{', '.join(product_code_list)}**. No se puede realizar la asignación.")
+                            df_para_mostrar_editor = pd.DataFrame()
+                            st.stop()
+                            
+                    invoices_with_product = df_product_filtered[col_factura].unique().tolist()
+                    
+                    product_code_final_str = product_code_list[0] if product_code_list else ''
+
+                    if product_code_list:
+                        # --- MODIFICACIÓN CLAVE: FILTRO ESTRICTO ---
+                        # Solo mantenemos las filas cuyo código de producto coincide con el filtro.
+                        df_temp_for_coverage = df_temp_all_lines[df_temp_all_lines[col_producto].astype(str).isin(product_code_list)].copy()
+                        
+                        # Si después de filtrar no queda nada (por ejemplo, el producto existe en el archivo pero no en las facturas de ese cliente), mostramos error.
+                        if df_temp_for_coverage.empty:
+                             st.error(f"No se encontraron facturas para el cliente {', '.join(client_code_list)} que contengan el producto {', '.join(product_code_list)}.")
+                             df_para_mostrar_editor = pd.DataFrame()
+                             st.stop()
+                    else:
+                        df_temp_for_coverage = df_temp_all_lines.copy()
                 else:
+                    product_code_final_str = ''
                     df_temp_for_coverage = df_temp_all_lines.copy()
 
                 df_temp_for_coverage['__monto_numeric__'] = df_temp_for_coverage[col_monto].apply(convert_value_to_float)
                 df_temp_for_coverage.dropna(subset=['__monto_numeric__'], inplace=True)
                 
                 if df_temp_for_coverage.empty:
-                     st.info("No hay facturas que coincidan con los filtros.")
+                     st.info("No hay facturas que coincidan con los filtros, Monto y Cl.F. de Portafolio.")
                      df_para_mostrar_editor = pd.DataFrame() 
                 else:
                     with st.spinner("Calculando..."):
                         chosen_invoices_df, cliente_a_usar, monto_cubierto = find_invoices_by_total_sum(df_temp_for_coverage, monto_nc, col_factura, col_monto, col_cliente, col_producto, assignment_mode)
                     
                     if chosen_invoices_df is None:
-                        st.error(f"Error de Cobertura: No se pudo cubrir el monto de {format_monto_local(monto_nc)}. Disponible: {format_monto_local(monto_cubierto)}")
+                        monto_faltante = monto_nc - monto_cubierto
+                        error_message = f"Error de Cobertura: El monto de NC de **{format_monto_local(monto_nc)}** no se pudo cubrir."
+                        filtro_aplicado = f" (filtradas por clientes: {', '.join(client_code_list)}, Cl.F. y facturas con productos: {', '.join(product_code_list)})" if product_code_list else f" (filtradas por clientes: {', '.join(client_code_list)} y Cl.F.)"
+                        error_message += f"\nEl monto total de **todas las facturas disponibles**{filtro_aplicado} es solo **{format_monto_local(monto_cubierto)}**."
+                        error_message += f"\n**Monto Faltante:** {format_monto_local(monto_faltante)}"
+                        st.error(error_message)
                         df_para_mostrar_editor = pd.DataFrame()
                         
                     elif not chosen_invoices_df.empty:
+                        num_invoices = len(chosen_invoices_df)
+                            
                         df_para_mostrar_editor = chosen_invoices_df.copy()
                         df_para_mostrar_editor['Monto Filas Selecc.'] = df_para_mostrar_editor['total_sum']
                         total_available_sum = df_para_mostrar_editor['Monto Filas Selecc.'].sum()
                         
                         if total_available_sum == 0:
-                            st.error("Error: Suma cero.")
+                            st.error("Error: La suma de los montos de las facturas seleccionadas es cero. Revise su archivo.")
                             df_para_mostrar_editor = pd.DataFrame()
                         else:
                             if assignment_mode == 'Prorrateo (Recomendado)':
-                                prorate_factor = monto_nc / monto_cubierto if monto_cubierto != 0 else 0
-                                df_para_mostrar_editor['Monto NC Asignado'] = (df_para_mostrar_editor['total_sum'] * prorate_factor).round(2)
-                                assigned_sum = df_para_mostrar_editor['Monto NC Asignado'].sum()
-                                difference = monto_nc - assigned_sum
-                                if not np.isclose(difference, 0):
-                                    df_para_mostrar_editor.loc[df_para_mostrar_editor.index[-1], 'Monto NC Asignado'] += difference
+                                if len(df_para_mostrar_editor) == 1 and df_para_mostrar_editor['Monto Filas Selecc.'].iloc[0] >= monto_nc:
+                                    df_para_mostrar_editor['Monto NC Asignado'] = monto_nc
+                                else:
+                                    prorate_factor = monto_nc / monto_cubierto if monto_cubierto != 0 else 0
+                                    df_para_mostrar_editor['Monto NC Asignado'] = df_para_mostrar_editor['total_sum'] * prorate_factor
+                                    df_para_mostrar_editor['Monto NC Asignado'] = df_para_mostrar_editor['Monto NC Asignado'].round(2)
+            
+                                    assigned_sum = df_para_mostrar_editor['Monto NC Asignado'].sum()
+                                    difference = monto_nc - assigned_sum
+                                    
+                                    if not np.isclose(difference, 0):
+                                        last_index = df_para_mostrar_editor.index[-1]
+                                        df_para_mostrar_editor.loc[last_index, 'Monto NC Asignado'] += difference
+                                        df_para_mostrar_editor.loc[last_index, 'Monto NC Asignado'] = df_para_mostrar_editor.loc[last_index, 'Monto NC Asignado'].round(2) 
+                                        
+                                    df_para_mostrar_editor = df_para_mostrar_editor.drop(columns=['total_sum'], errors='ignore')
+                                    
+                            elif assignment_mode == 'Estricto (Truncar)':
+                                df_para_mostrar_editor = df_para_mostrar_editor.drop(columns=['total_sum'], errors='ignore')
                             
+                            if product_code_final_str and col_producto not in df_para_mostrar_editor.columns:
+                                df_para_mostrar_editor[col_producto] = product_code_final_str
+                            elif col_producto in df_para_mostrar_editor.columns:
+                                if product_code_final_str:
+                                     df_para_mostrar_editor[col_producto] = df_para_mostrar_editor[col_producto].replace('', product_code_final_str).fillna(product_code_final_str)
+                            else:
+                                 df_para_mostrar_editor[col_producto] = ''
+
                             df_para_mostrar_editor[col_cliente] = cliente_a_usar 
+                            
+                            df_para_mostrar_editor['Peso %'] = df_para_mostrar_editor['Monto NC Asignado'] / monto_nc * 100.0 if monto_nc != 0 else 0.0
                             df_para_mostrar_editor['Cantidad'] = '1'
                             df_para_mostrar_editor['VARIACION DE PRECIO'] = df_para_mostrar_editor['Monto NC Asignado']
-                            df_para_mostrar_editor['CONDICION'] = template_condicion
-                            df_para_mostrar_editor['U. MEDIDA'] = 'UN'
+                            
+                            if condicion_forzada:
+                                df_para_mostrar_editor['CONDICION'] = condicion_forzada
+                            else:
+                                df_para_mostrar_editor['CONDICION'] = 'ZNOT'
+                                
+                            if col_unidad_medida and col_unidad_medida in df_temp_for_coverage.columns:
+                                df_um_candidates = df_temp_for_coverage.copy()
+                                if product_code_list: 
+                                    df_um_candidates = df_temp_all_lines.copy()
+                                    df_um_candidates = df_um_candidates[df_temp_all_lines[col_producto].astype(str).isin(product_code_list)]
+                                    
+                                if not df_um_candidates.empty:
+                                    um_map = df_um_candidates.drop_duplicates(subset=[col_factura], keep='first').set_index(col_factura)[col_unidad_medida].to_dict()
+                                    df_para_mostrar_editor['U. MEDIDA'] = df_para_mostrar_editor[col_factura].map(um_map).fillna('UN')
+                                else:
+                                    df_para_mostrar_editor['U. MEDIDA'] = 'UN'
+                                    
+                            elif 'U. MEDIDA' not in df_para_mostrar_editor.columns:
+                                df_para_mostrar_editor['U. MEDIDA'] = 'UN'
+                                
                             st.session_state['df_for_export_single_line'] = df_para_mostrar_editor.copy() 
+                            
+                        if st.session_state.get('df_for_export_single_line') is None or df_para_mostrar_editor.empty:
+                             st.error("Error al construir la tabla de resultados después del cálculo.")
             else: 
                 df_filtrado = df_pre_filtros.copy()
-                if client_code_list:
-                    df_filtrado = df_filtrado[df_filtrado[col_cliente].astype(str).apply(clean_leading_zeros).isin(client_code_list)].copy()
-                df_para_mostrar_editor = df_filtrado.drop_duplicates(subset=[col_factura]).copy()
+                
+                if client_code_list and col_cliente and col_cliente in df_filtrado.columns:
+                    df_filtrado = df_filtrado[df_filtrado[col_cliente].isin(client_code_list)].copy()
+                    
+                if product_code_list and col_producto and col_producto in df_filtrado.columns:
+                    df_filtrado = df_filtrado[df_filtrado[col_producto].astype(str).isin(product_code_list)].copy()
+
+                if df_filtrado.empty:
+                     st.info("No hay facturas que coincidan con los filtros (o fueron filtradas por Cl.F.).")
+                     df_para_mostrar_editor = pd.DataFrame()
+                else:
+                    if col_factura and col_factura in df_filtrado.columns:
+                        unique_invoices = df_filtrado[col_factura].unique()
+                        df_para_mostrar = df_filtrado.drop_duplicates(subset=[col_factura]).copy()
+                    else:
+                        st.error("Columna de factura no encontrada para la visualización.")
+                        df_para_mostrar_editor = pd.DataFrame()
+                        st.stop()
+                    
+                    if condicion_forzada:
+                        df_para_mostrar['CONDICION'] = condicion_forzada
+                    elif col_condicion and col_condicion in df_para_mostrar.columns:
+                        df_para_mostrar['CONDICION'] = df_para_mostrar[col_condicion].fillna(template_condicion)
+                    elif 'CONDICION' not in df_para_mostrar.columns:
+                        df_para_mostrar['CONDICION'] = template_condicion
+                        
+                    df_para_mostrar['Monto NC Asignado'] = ''
+                    df_para_mostrar['VARIACION DE PRECIO'] = ''
+                    
+                    df_all_client_invoices = df_pre_filtros.copy()
+                    
+                    if client_code_list and col_cliente and col_cliente in df_all_client_invoices.columns:
+                        df_all_client_invoices = df_all_client_invoices[df_pre_filtros[col_cliente].isin(client_code_list)].copy()
+                    
+                    df_all_client_invoices['__monto_numeric__'] = df_all_client_invoices[col_monto].apply(convert_value_to_float)
+                    df_all_client_invoices.dropna(subset=['__monto_numeric__'], inplace=True)
+                    
+                    if not df_all_client_invoices.empty and col_factura in df_all_client_invoices.columns:
+                        invoice_sums_dict = df_all_client_invoices.groupby(col_factura)['__monto_numeric__'].sum().to_dict()
+                        df_para_mostrar['Monto Filas Selecc.'] = df_para_mostrar[col_factura].map(invoice_sums_dict)
+                    else:
+                        df_para_mostrar['Monto Filas Selecc.'] = 0 
+                    
+                    if 'Monto NC Asignado' in df_para_mostrar.columns:
+                         df_para_mostrar = df_para_mostrar.drop(columns=['Monto NC Asignado', 'VARIACION DE PRECIO'], errors='ignore')
+        
+                    df_para_mostrar_editor = df_para_mostrar.copy()
 
         except Exception as e:
             st.error(f"Ocurrió un error: {e}")
@@ -978,31 +1097,77 @@ with tab1:
                 col_producto: 'Material'
             }, errors='ignore')
     
+            if 'ASIGNACION' not in df_para_mostrar_editor.columns and col_factura in df.columns:
+                 df_para_mostrar_editor['ASIGNACION'] = df_para_mostrar_editor[col_factura]
+            if 'Solicitante' not in df_para_mostrar_editor.columns and col_cliente in df.columns:
+                df_para_mostrar_editor['Solicitante'] = df_para_mostrar_editor[col_cliente]
+
+            if cliente_a_usar:
+                df_para_mostrar_editor['Solicitante'] = cliente_a_usar
+            
+            if monto_nc is None or monto_nc <= 0:
+                if 'Material' in df_para_mostrar_editor.columns:
+                     df_para_mostrar_editor['Material'] = df_para_mostrar_editor['Material'] 
+
+            if 'Material' not in df_para_mostrar_editor.columns:
+                df_para_mostrar_editor['Material'] = ''
+
+            if col_unidad_medida and col_unidad_medida in df_para_mostrar_editor.columns:
+                df_para_mostrar_editor['U. MEDIDA'] = df_para_mostrar_editor[col_unidad_medida].fillna('UN')
+            elif 'U. MEDIDA' not in df_para_mostrar_editor.columns:
+                df_para_mostrar_editor['U. MEDIDA'] = 'UN'
+            if 'CONDICION' not in df_para_mostrar_editor.columns:
+                df_para_mostrar_editor['CONDICION'] = 'ZNOT'
+            if 'Observación' in df_para_mostrar_editor.columns:
+                df_para_mostrar_editor = df_para_mostrar_editor.drop(columns=['Observación'], errors='ignore')
+                
             df_para_mostrar_editor['Observación'] = ''
             df_para_mostrar_editor['Motivo'] = 'R02'
             
-            current_date = datetime.now().date().strftime('%d/%m/%Y')
-            for col in ["Fecha de Pedido", "Fecha de Precio", "Fecha de Factura"]:
-                df_para_mostrar_editor[col] = current_date
+            if 'Canal' in df_para_mostrar_editor.columns and 'Canal de Distribucion' not in df_para_mostrar_editor.columns:
+                 df_para_mostrar_editor = df_para_mostrar_editor.rename(columns={'Canal': 'Canal de Distribucion'}, errors='ignore')
+                 
+            current_date = datetime.now().date()
+            date_to_use_str = current_date.strftime('%d/%m/%Y')
+            date_cols_to_add = ["Fecha de Pedido", "Fecha de Precio", "Fecha de Factura"]
+            
+            for col in date_cols_to_add:
+                if col not in df_para_mostrar_editor.columns:
+                    df_para_mostrar_editor[col] = ''
+                df_para_mostrar_editor[col] = date_to_use_str
                  
             selected_motivo = st.session_state.get('filtro_motivo')
+            
             ncf_code = NCF_MAPPING.get(selected_motivo, "NCF.1") 
-            texto_cabecera = f"{ncf_code} {selected_motivo}"
-            if ticket_number: texto_cabecera += f" (Ticket {ticket_number})"
+            
+            if selected_motivo == "Sin Motivo":
+                 texto_cabecera = "NCF.1"
+            else:
+                 texto_cabecera = f"{ncf_code} {selected_motivo}"
+            
+            if ticket_number:
+                texto_cabecera += f" (Ticket {ticket_number})"
             
             df_para_mostrar_editor['TEXTO CABECERA'] = texto_cabecera
             df_para_mostrar_editor['Pedido Cliente'] = texto_cabecera 
             
             selected_defaults = PORTFOLIO_DEFAULTS.get(selected_portfolio_cod)
+
             if selected_defaults:
                 df_para_mostrar_editor = df_para_mostrar_editor.assign(**selected_defaults)
                 
-            df_display = df_para_mostrar_editor.copy()
+            df_display_editor = df_para_mostrar_editor.copy()
+            
             for col_name in ['Monto Filas Selecc.', 'Monto NC Asignado']:
-                if col_name in df_display.columns:
-                    df_display[col_name] = df_display[col_name].apply(convert_value_to_float).apply(format_monto_local)
+                if col_name in df_display_editor.columns:
+                    df_display_editor[col_name] = df_display_editor[col_name].apply(convert_value_to_float).apply(format_monto_local)
         
-            df_display_renamed = df_display.rename(columns={
+            if monto_nc is None or monto_nc <= 0:
+                if 'Monto Filas Selecc.' in df_display_editor.columns:
+                    df_display_editor['__sort_col__'] = df_display_editor['Monto Filas Selecc.'].apply(convert_value_to_float)
+                    df_display_editor = df_display_editor.sort_values(by='__sort_col__', ascending=False).drop(columns=['__sort_col__'], errors='ignore')
+                
+            df_display_editor_renamed = df_display_editor.rename(columns={
                 'Solicitante': 'Cod. Cliente',
                 'ASIGNACION': 'Factura',
                 'Material': 'Cod. Producto',
@@ -1011,30 +1176,136 @@ with tab1:
                 'Monto Filas Selecc.': 'Monto Total Factura' 
             }, errors='ignore')
             
-            DISPLAY_COLS = ['Cod. Cliente', 'Factura', 'Cod. Producto', 'U. Medida', 'Monto Total Factura', 'Monto Nota de Crédito']
-            st.dataframe(df_display_renamed[[c for c in DISPLAY_COLS if c in df_display_renamed.columns]], column_config=col_config_dict, hide_index=True, use_container_width=True)
+            DISPLAY_COLS_FINAL = [
+                'Cod. Cliente',
+                'Factura',
+                'Cod. Producto',
+                'U. Medida',
+                'Monto Total Factura', 
+                'Monto Nota de Crédito'
+            ]
             
-            if st.button("Añadir Ticket", use_container_width=True):
-                st.session_state['stacked_invoices'].append(df_para_mostrar_editor.copy())
-                st.success("Ticket añadido.")
-                st.rerun() 
+            existing_cols = [col for col in DISPLAY_COLS_FINAL if col in df_display_editor_renamed.columns]
+            df_display_editor_filtered = df_display_editor_renamed[existing_cols].copy()
+            
+            for col in DISPLAY_COLS_FINAL:
+                if col not in df_display_editor_filtered.columns:
+                    df_display_editor_filtered[col] = ''
+                    
+            st.dataframe(
+                df_display_editor_filtered,
+                column_config=col_config_dict, 
+                hide_index=True,
+                use_container_width=True,
+            )
+            
+            df_export_base = df_para_mostrar_editor.copy()
+            
+            if not df_export_base.empty:
+                df_for_all_export = df_export_base.drop(columns=['Monto Filas Selecc.', 'Peso %'], errors='ignore').copy()
+                
+                if st.button("Añadir Ticket", use_container_width=True):
+                    ticket_for_stack_id = ticket_number if ticket_number else f"SINTICKET_{datetime.now().strftime('%H%M%S')}_{len(st.session_state['stacked_invoices'])}"
+                    df_for_all_export['ID_Apilado'] = f"NC_{ticket_for_stack_id}"
+                    st.session_state['stacked_invoices'].append(df_for_all_export.copy())
+                    st.success("Ticket añadido.")
+                    st.rerun() 
+            else:
+                st.info("No hay facturas en la tabla de resultados para la descarga.")
 
 with tab2:
-    if st.session_state['stacked_invoices']:
+    if not st.session_state['stacked_invoices']:
+        pass
+    else:
         st.header("Tickets Generados")
+        stacked_col_config_dict = {
+            "ID de Lote": st.column_config.TextColumn("ID de Lote", help="Identificador único del ticket generado", width="medium"),
+            "Cod. Cliente": st.column_config.TextColumn("Cod. Cliente", width="small", help="Código del Cliente (Solicitante)"),
+            "Factura": st.column_config.TextColumn("Factura", width="small", help="Número de Factura o Documento de Asignación"),
+            "Cod. Producto": st.column_config.TextColumn("Cod. Producto", width="small", help="Código del Material o Producto"),
+            "U. Medida": st.column_config.TextColumn("U. Medida", width="small", help="Unidad de Medida (Ej: UN, KG)"),
+            "Monto Nota de Crédito": st.column_config.TextColumn("Monto Nota de Crédito", width="small", help="Monto de la NC asignado (prorrateado) a esta factura."),
+        }
+        
         for i, df_lote in reversed(list(enumerate(st.session_state['stacked_invoices']))):
-            with st.expander(f"Ticket {i+1}"):
-                st.dataframe(df_lote, use_container_width=True)
-                if st.button(f"Eliminar Ticket {i+1}", key=f"del_{i}"):
+            lote_id = f"Lote Vacío {i}" 
+            if not df_lote.empty:
+                if 'TEXTO CABECERA' in df_lote.columns and not df_lote['TEXTO CABECERA'].empty:
+                    header_text = str(df_lote['TEXTO CABECERA'].iloc[0]).strip()
+                    if header_text:
+                        lote_id = header_text
+                elif 'ID_Apilado' in df_lote.columns and not df_lote['ID_Apilado'].empty:
+                    lote_id = str(df_lote['ID_Apilado'].iloc[0]).strip()
+                        
+            with st.expander(f"{lote_id}"):
+                df_lote_display = df_lote.copy()
+                
+                required_display_cols = ['Solicitante', 'ASIGNACION', 'Material', 'U. MEDIDA', 'Monto NC Asignado', 'ID_Apilado']
+                for col in required_display_cols:
+                    if col not in df_lote_display.columns:
+                        df_lote_display[col] = ''
+                        
+                if 'Monto NC Asignado' in df_lote_display.columns:
+                    df_lote_display['Monto NC Asignado'] = df_lote_display['Monto NC Asignado'].apply(convert_value_to_float).apply(format_monto_local)
+
+                df_lote_display_renamed = df_lote_display.rename(columns={
+                    'Solicitante': 'Cod. Cliente',
+                    'ASIGNACION': 'Factura',
+                    'Material': 'Cod. Producto',
+                    'Monto NC Asignado': 'Monto Nota de Crédito',
+                    'U. MEDIDA': 'U. Medida',
+                    'ID_Apilado': 'ID de Lote'
+                }, errors='ignore')
+
+                stacked_display_cols_final = [
+                    'ID de Lote', 
+                    'Cod. Cliente',
+                    'Factura',
+                    'Cod. Producto',
+                    'U. Medida',
+                    'Monto Nota de Crédito'
+                ]
+
+                existing_stacked_cols = [col for col in stacked_display_cols_final if col in df_lote_display_renamed.columns]
+                df_lote_display_filtered = df_lote_display_renamed[existing_stacked_cols].copy()
+
+                st.dataframe(
+                    df_lote_display_filtered,
+                    column_config=stacked_col_config_dict,
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                
+                if st.button(f"Eliminar este Lote ({lote_id})", key=f"delete_lote_{i}", type="secondary"):
                     st.session_state['stacked_invoices'].pop(i)
+                    st.success(f"Lote '{lote_id}' eliminado correctamente.")
                     st.rerun()
 
-        if st.button("Limpiar Todo", type="secondary"):
-            st.session_state['stacked_invoices'] = []
-            st.rerun()
-            
-        df_stacked = pd.concat(st.session_state['stacked_invoices'], ignore_index=True)
-        out_buf = create_excel_for_all_invoices(df_stacked, st.session_state.get('portafolio_cod', '--'), multiple_invoices=True)
-        if out_buf:
-            st.download_button(label="Descargar Todos los Tickets", data=out_buf, file_name=get_file_name(st.session_state.get('portafolio_cod', '--'), "", multiple_invoices=True), mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+        col_clear_stack, col_download_stack = st.columns([1, 1])
 
+        with col_download_stack:
+            if st.session_state['stacked_invoices']:
+                df_stacked_all_for_download = pd.concat(st.session_state['stacked_invoices'], ignore_index=True)
+                selected_portfolio_for_download = st.session_state.get('portafolio_cod', '--')
+                
+                if not df_stacked_all_for_download.empty:
+                    output_buffer_stacked = create_excel_for_all_invoices(df_stacked_all_for_download.drop(columns=['ID_Apilado'], errors='ignore'), selected_portfolio_for_download, multiple_invoices=True)
+                else:
+                    output_buffer_stacked = None
+                
+                if output_buffer_stacked:
+                    st.download_button(
+                        label="Descargar Todos los Tickets",
+                        data=output_buffer_stacked,
+                        file_name=get_file_name(selected_portfolio_for_download, "", multiple_invoices=True),
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True,
+                    )
+                else:
+                    st.warning("No hay tickets para descargar o no se pudo generar el archivo.")
+
+        with col_clear_stack:
+            if st.button("Limpiar Todos los Tickets", use_container_width=True, type="secondary"):
+                st.session_state['stacked_invoices'] = []
+                st.success("Todos los tickets han sido limpiados.")
+                st.rerun()
